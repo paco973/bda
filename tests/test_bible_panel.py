@@ -20,31 +20,75 @@ def tmp_db(tmp_path, monkeypatch):
     database.init_db()
 
 
-def test_selection_d_un_passage(qapp):
+def test_selection_d_un_verset(qapp):
     bible.ensure_imported()
     from logos.ui.bible_panel import BiblePanel
 
     panel = BiblePanel()
-    assert panel.book_combo.count() == 66
+    assert len(panel._books) == 66
 
-    # Jean 3:16-18
-    panel.book_combo.setCurrentIndex(42)
-    assert panel.book_combo.currentText() == "Jean"
-    panel.chapter_spin.setValue(3)
-    panel.verse_from_spin.setValue(16)
-    panel.verse_to_spin.setValue(18)
+    # Jean 3:16 (le navigateur sélectionne un verset précis)
+    panel._select_book(43)  # Jean
+    assert panel._book["name"] == "Jean"
+    panel._select_chapter(3)
+    panel._select_verse(16)
 
     label, content = panel.current_passage()
-    assert label == "Jean 3:16-18"
+    assert label == "Jean 3:16"
     slides = content.split("\n\n")
-    assert len(slides) == 3
+    assert len(slides) == 1
     assert "Dieu a tant aimé le monde" in slides[0]
     assert slides[0].endswith("Jean 3:16")
+
+
+def test_defaut_actes_et_recherche(qapp):
+    bible.ensure_imported()
+    from logos.ui.bible_panel import BiblePanel
+
+    panel = BiblePanel()
+    # Livre par défaut : Actes (id 44), chapitre 1 (comme la maquette)
+    assert panel._book["id"] == 44
+    assert panel._chapter == 1
+    assert panel.reference_label.text() == f"{panel._book['name']} 1"
+
+    # La recherche masque les livres qui ne correspondent pas
+    panel.search_edit.setText("jean")
+    assert panel._book_cards[43].isVisibleTo(panel)      # Jean reste visible
+    assert not panel._book_cards[1].isVisibleTo(panel)   # Genèse masquée
+    panel.search_edit.setText("")
+    assert panel._book_cards[1].isVisibleTo(panel)
+
+
+def test_deck_du_chapitre(qapp):
+    bible.ensure_imported()
+    from logos.ui.bible_panel import BiblePanel
+
+    panel = BiblePanel()
+    panel._select_book(43)   # Jean
+    panel._select_chapter(3)
+    panel._select_verse(16)
+
+    deck, index = panel.current_deck()
+    assert index == 15                       # verset 16 -> index 15
+    assert "Dieu a tant aimé le monde" in deck[index]
+    assert deck[index].endswith("Jean 3:16")
+
+
+def test_projeter_emet_le_signal(qapp):
+    bible.ensure_imported()
+    from logos.ui.bible_panel import BiblePanel
+
+    panel = BiblePanel()
+    recu = []
+    panel.project_requested.connect(lambda: recu.append(True))
+    panel._on_project_clicked()
+    assert recu == [True]
 
 
 def test_panneau_desactive_sans_bible(qapp):
     from logos.ui.bible_panel import BiblePanel
 
     panel = BiblePanel()  # base vide : la Bible n'est pas importée
-    assert not panel.show_btn.isEnabled()
+    assert not panel.project_btn.isEnabled()
     assert not panel.add_btn.isEnabled()
+    assert panel.current_deck() == ([], 0)

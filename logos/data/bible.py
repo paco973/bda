@@ -11,6 +11,39 @@ from logos.data.database import get_connection
 
 BIBLE_ASSET = Path(__file__).parent.parent / "assets" / "bible_ls1910.json.gz"
 TRANSLATION = "Louis Segond (1910)"
+TRANSLATION_CODE = "LSG"
+
+# Nombre de livres de l'Ancien Testament (les 39 premiers dans l'ordre canonique).
+OLD_TESTAMENT_COUNT = 39
+
+# Abréviations d'affichage des 66 livres, dans l'ordre canonique (id 1..66),
+# telles qu'attendues par la navigation Bible (colonnes de la grille des livres).
+BOOK_ABBREVIATIONS = {
+    1: "Gn", 2: "Ex", 3: "Lv", 4: "Nm", 5: "Dt",
+    6: "Js", 7: "Jg", 8: "Rt", 9: "1Sa", 10: "2Sa",
+    11: "1Ro", 12: "2Ro", 13: "1Ch", 14: "2Ch", 15: "Esd",
+    16: "Ne", 17: "Est", 18: "Job", 19: "Psa", 20: "Pro",
+    21: "Ecc", 22: "Can", 23: "Esa", 24: "Jer", 25: "Lam",
+    26: "Eze", 27: "Dn", 28: "Ose", 29: "Joe", 30: "Amo",
+    31: "Abd", 32: "Jon", 33: "Mic", 34: "Nah", 35: "Hb",
+    36: "Sop", 37: "Agg", 38: "Zac", 39: "Mal",
+    40: "Mat", 41: "Mar", 42: "Luc", 43: "Jea", 44: "Act",
+    45: "Rom", 46: "1Co", 47: "2Co", 48: "Gal", 49: "Eph",
+    50: "Phi", 51: "Col", 52: "1Th", 53: "2Th", 54: "1Ti",
+    55: "2Ti", 56: "Tit", 57: "Phm", 58: "He", 59: "Jac",
+    60: "1Pi", 61: "2Pi", 62: "1Jn", 63: "2Jn", 64: "3Jn",
+    65: "Jud", 66: "Apo",
+}
+
+
+def book_abbreviation(book_id: int) -> str:
+    """Abréviation courte d'un livre (repli sur les 2 premières lettres du nom)."""
+    return BOOK_ABBREVIATIONS.get(book_id, "")
+
+
+def testament(book_id: int) -> str:
+    """« Ancien Testament » (livres 1 à 39) ou « Nouveau Testament » (40 à 66)."""
+    return "Ancien Testament" if book_id <= OLD_TESTAMENT_COUNT else "Nouveau Testament"
 
 
 def is_available() -> bool:
@@ -67,6 +100,17 @@ def get_verse_count(book_id: int, chapter: int) -> int:
     ).fetchone()[0]
     conn.close()
     return count
+
+
+def get_chapter(book_id: int, chapter: int):
+    """Tous les versets (verse, text) d'un chapitre, dans l'ordre."""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT verse, text FROM bible_verses WHERE book_id = ? AND chapter = ? ORDER BY verse",
+        (book_id, chapter),
+    ).fetchall()
+    conn.close()
+    return rows
 
 
 def get_passage(book_id: int, chapter: int, verse_start: int, verse_end: int):

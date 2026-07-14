@@ -21,16 +21,24 @@ BLACK = "#1A120A"           # noir profond (cercle, texte du logo)
 COLOR_BACKGROUND = BLACK          # fond des panneaux (thème sombre)
 COLOR_SURFACE = "#241C12"         # fond des zones de contenu (légèrement plus clair)
 COLOR_SURFACE_ALT = "#2E2416"     # fond alterné (listes, champs)
+COLOR_SURFACE_SUNKEN = "#211A10"  # zone en creux (chapitres/versets sous la Bible)
 COLOR_BORDER = BRONZE
+COLOR_BORDER_SUBTLE = "#3A2E1C"   # séparateurs et bordures discrètes
 COLOR_PRIMARY = GOLD              # accent principal (boutons, sélection)
 COLOR_PRIMARY_HOVER = GOLD_LIGHT
 COLOR_PRIMARY_PRESSED = GOLD_DARK
+COLOR_ON_PRIMARY_MUTED = "#5A4420"  # texte secondaire posé sur un fond doré
 COLOR_TEXT = GOLD_LIGHTEST        # texte principal sur fond sombre
 COLOR_TEXT_MUTED = GOLD_MID
 COLOR_TEXT_ON_PRIMARY = BLACK     # texte sur bouton doré (contraste)
 COLOR_DANGER = "#B33A2E"          # pour actions destructrices (supprimer)
 COLOR_DANGER_HOVER = "#CC4A3D"
+COLOR_SUCCESS = "#4E8C5A"         # état positif (écran détecté)
+COLOR_WARNING = "#D89A3C"         # avertissement (un autre mode est à l'antenne)
 COLOR_LIVE = "#79C77B"            # indicateur « en direct » (projection active)
+
+# Police à empattement pour la lecture du texte biblique (rappel « imprimé »).
+READING_FONT_FAMILY = "Georgia, 'Times New Roman', 'Noto Serif', serif"
 
 # Fenêtre de projection : reste noire pour la lisibilité en salle,
 # avec le texte projeté en doré clair pour rappeler l'identité visuelle.
@@ -39,12 +47,18 @@ PROJECTION_TEXT = GOLD_LIGHTEST
 
 
 def build_stylesheet() -> str:
-    """Feuille de style Qt (QSS) appliquée à toute l'application de contrôle."""
+    """Feuille de style Qt (QSS) appliquée à toute l'application de contrôle.
+
+    On ne fixe volontairement aucune `font-family` : Qt utilise alors la police
+    par défaut de l'application, qui est déjà la police système native (Segoe UI
+    sur Windows, San Francisco sur macOS, etc.). Coder en dur une police absente
+    selon l'OS (« Segoe UI » hors Windows) déclencherait un avertissement Qt et
+    un coût de résolution d'alias.
+    """
     return f"""
     QWidget {{
         background-color: {COLOR_BACKGROUND};
         color: {COLOR_TEXT};
-        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
         font-size: 13px;
     }}
 
@@ -272,6 +286,57 @@ def build_stylesheet() -> str:
         background: {COLOR_BORDER};
         border-radius: 5px;
         min-height: 20px;
+    }}
+
+    /* ---------- Barre de menus (Fichier / Chants / Culte…) ---------- */
+    QMenuBar {{
+        background-color: {COLOR_SURFACE};
+        color: {COLOR_TEXT_MUTED};
+        border-bottom: 1px solid {COLOR_BORDER_SUBTLE};
+        padding: 2px 6px;
+    }}
+
+    QMenuBar::item {{
+        background: transparent;
+        padding: 6px 12px;
+        border-radius: 4px;
+    }}
+
+    QMenuBar::item:selected {{
+        background: {COLOR_SURFACE_ALT};
+        color: {COLOR_TEXT};
+    }}
+
+    QMenuBar::item:pressed {{
+        background: {COLOR_PRIMARY};
+        color: {COLOR_TEXT_ON_PRIMARY};
+    }}
+
+    QMenu {{
+        background-color: {COLOR_SURFACE};
+        color: {COLOR_TEXT};
+        border: 1px solid {COLOR_BORDER};
+        padding: 4px;
+    }}
+
+    QMenu::item {{
+        padding: 6px 24px 6px 20px;
+        border-radius: 4px;
+    }}
+
+    QMenu::item:selected {{
+        background: {COLOR_PRIMARY};
+        color: {COLOR_TEXT_ON_PRIMARY};
+    }}
+
+    QMenu::item:disabled {{
+        color: {COLOR_TEXT_MUTED};
+    }}
+
+    QMenu::separator {{
+        height: 1px;
+        background: {COLOR_BORDER_SUBTLE};
+        margin: 4px 8px;
     }}
 
     QMessageBox {{
