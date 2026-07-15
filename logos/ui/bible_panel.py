@@ -283,7 +283,6 @@ def _circular_logo(size: int):
 class BiblePanel(QWidget):
     selection_changed = Signal()          # livre/chapitre/verset (jeu de diapos) modifié
     project_requested = Signal()          # « Projeter le verset » cliqué
-    service_add_requested = Signal(str, str)
     close_requested = Signal()            # retour à l'accueil (bouton « ‹ Retour »)
 
     def __init__(self):
@@ -452,12 +451,6 @@ class BiblePanel(QWidget):
         self.project_btn.setStyleSheet(_btn_primary_style())
         self.project_btn.clicked.connect(self._on_project_clicked)
         footer_col.addWidget(self.project_btn)
-
-        self.add_btn = QPushButton("＋ Ajouter au culte")
-        self.add_btn.setCursor(Qt.PointingHandCursor)
-        self.add_btn.setStyleSheet(_btn_secondary_style())
-        self.add_btn.clicked.connect(self._emit_service_add)
-        footer_col.addWidget(self.add_btn)
         layout.addWidget(footer)
         return col
 
@@ -593,7 +586,7 @@ class BiblePanel(QWidget):
         self._select_book(default["id"])
 
     def _show_unavailable(self):
-        for widget in (self.project_btn, self.add_btn, self.search_edit):
+        for widget in (self.project_btn, self.search_edit):
             widget.setEnabled(False)
         message = QLabel(
             "Bible non disponible : fichier logos/assets/bible_ls1910.json.gz "
@@ -745,11 +738,6 @@ class BiblePanel(QWidget):
         if self._verse is None:
             self._select_verse(1)
         self.project_requested.emit()
-
-    def _emit_service_add(self):
-        passage = self.current_passage()
-        if passage is not None:
-            self.service_add_requested.emit(*passage)
 
 
 def _clear_layout(layout):

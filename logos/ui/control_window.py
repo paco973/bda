@@ -1,9 +1,8 @@
 """
-Fenêtre principale : accueil, mode Chants/Culte et mode Bible.
+Fenêtre principale : page d'accueil et mode Bible.
 
-Chaque mode embarque son propre poste de contrôle (`ProjectionControls`).
-Un `ProjectionController` partagé possède l'unique fenêtre de projection et
-applique l'exclusivité : un seul mode peut être « à l'antenne » à la fois.
+Le mode Bible embarque son propre poste de contrôle (`ProjectionControls`).
+Un `ProjectionController` partagé possède l'unique fenêtre de projection.
 """
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QGuiApplication, QAction, QKeySequence
@@ -13,19 +12,11 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QVBoxLayout,
-    QListWidget,
-    QListWidgetItem,
-    QLineEdit,
-    QTextEdit,
-    QPushButton,
     QLabel,
-    QSplitter,
     QStackedWidget,
     QMessageBox,
-    QGroupBox,
 )
 
-from logos.data import database, service, slides
 from logos.ui import theme
 from logos.ui.bible_panel import BiblePanel, _circular_logo
 from logos.ui.projection_controller import ProjectionController
@@ -89,13 +80,8 @@ class ControlWindow(QMainWindow):
 
         # Contrôleur de projection partagé (unique fenêtre de projection).
         self.controller = ProjectionController()
-        self.current_song_id = None
-        self.current_slides = []
-        self._syncing_slide = False
 
         self._build_ui()
-        self._refresh_song_list()
-        self._refresh_service_list()
 
         # Branchement/débranchement d'un écran pendant l'exécution.
         app = QGuiApplication.instance()
@@ -106,12 +92,10 @@ class ControlWindow(QMainWindow):
     def _build_ui(self):
         self.stack = QStackedWidget()
 
-        self.control_page = self._build_chants_page()
         self.bible_page = self._build_bible_page()
         self.home_page = self._build_home_page()
 
         self.stack.addWidget(self.home_page)
-        self.stack.addWidget(self.control_page)
         self.stack.addWidget(self.bible_page)
         self.stack.setCurrentWidget(self.home_page)
 
@@ -138,118 +122,12 @@ class ControlWindow(QMainWindow):
     def _update_settings_bar_visibility(self, *_):
         self.settings_bar.setVisible(self.stack.currentWidget() is not self.home_page)
 
-    # ---------- Mode Chants / Culte ----------
-    def _build_chants_page(self):
-        page = QWidget()
-        root = QHBoxLayout(page)
-        splitter = QSplitter(Qt.Horizontal)
-        root.addWidget(splitter)
-
-        # --- Colonne 1 : bibliothèque de chants ---
-        songs_col = QWidget()
-        left_layout = QVBoxLayout(songs_col)
-        self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Rechercher un chant...")
-        self.search_box.textChanged.connect(self._refresh_song_list)
-        self.song_list = QListWidget()
-        self.song_list.currentItemChanged.connect(self._on_song_selected)
-
-        btn_row = QHBoxLayout()
-        new_btn = QPushButton("Nouveau")
-        new_btn.clicked.connect(self._new_song)
-        del_btn = QPushButton("Supprimer")
-        del_btn.setProperty("buttonStyle", "danger")
-        del_btn.clicked.connect(self._delete_song)
-        btn_row.addWidget(new_btn)
-        btn_row.addWidget(del_btn)
-
-        add_to_service_btn = QPushButton("Ajouter au culte")
-        add_to_service_btn.clicked.connect(self._add_current_song_to_service)
-
-        left_layout.addWidget(self.search_box)
-        left_layout.addWidget(self.song_list)
-        left_layout.addLayout(btn_row)
-        left_layout.addWidget(add_to_service_btn)
-        splitter.addWidget(songs_col)
-
-        # --- Colonne 2 : édition + ordre du culte ---
-        middle = QWidget()
-        middle_layout = QVBoxLayout(middle)
-
-        edit_group = QGroupBox("Édition du chant")
-        edit_layout = QVBoxLayout(edit_group)
-        self.title_edit = QLineEdit()
-        self.title_edit.setPlaceholderText("Titre du chant")
-        self.lyrics_edit = QTextEdit()
-        self.lyrics_edit.setPlaceholderText(
-            "Paroles ici.\n\nLaissez une ligne vide entre chaque diapositive."
-        )
-        save_btn = QPushButton("Enregistrer le chant")
-        save_btn.clicked.connect(self._save_song)
-        edit_layout.addWidget(QLabel("Titre"))
-        edit_layout.addWidget(self.title_edit)
-        edit_layout.addWidget(QLabel("Paroles (une diapo par paragraphe)"))
-        edit_layout.addWidget(self.lyrics_edit)
-        edit_layout.addWidget(save_btn)
-        middle_layout.addWidget(edit_group, 3)
-
-        service_group = QGroupBox("Ordre du culte")
-        service_layout = QVBoxLayout(service_group)
-        self.service_list = QListWidget()
-        self.service_list.setToolTip("Cliquer un élément charge ses diapositives")
-        self.service_list.itemClicked.connect(self._on_service_item_clicked)
-        service_layout.addWidget(self.service_list)
-        service_btn_row = QHBoxLayout()
-        up_btn = QPushButton("▲")
-        up_btn.setProperty("buttonStyle", "secondary")
-        up_btn.clicked.connect(lambda: self._move_service_item(-1))
-        down_btn = QPushButton("▼")
-        down_btn.setProperty("buttonStyle", "secondary")
-        down_btn.clicked.connect(lambda: self._move_service_item(1))
-        remove_btn = QPushButton("Retirer")
-        remove_btn.setProperty("buttonStyle", "secondary")
-        remove_btn.clicked.connect(self._remove_service_item)
-        clear_btn = QPushButton("Vider")
-        clear_btn.setProperty("buttonStyle", "danger")
-        clear_btn.clicked.connect(self._clear_service)
-        for btn in (up_btn, down_btn, remove_btn, clear_btn):
-            service_btn_row.addWidget(btn)
-        service_layout.addLayout(service_btn_row)
-        middle_layout.addWidget(service_group, 2)
-        splitter.addWidget(middle)
-
-        # --- Colonne 3 : diapositives + poste de contrôle de projection ---
-        right = QWidget()
-        right_layout = QVBoxLayout(right)
-
-        slides_group = QGroupBox("Diapositives")
-        slides_layout = QVBoxLayout(slides_group)
-        self.slide_list = QListWidget()
-        self.slide_list.setToolTip("Cliquer une diapositive la met en aperçu")
-        self.slide_list.currentItemChanged.connect(self._on_slide_row_changed)
-        slides_layout.addWidget(self.slide_list)
-        right_layout.addWidget(slides_group, 3)
-
-        projection_group = QGroupBox("Projection")
-        projection_layout = QVBoxLayout(projection_group)
-        self.chants_controls = ProjectionControls(
-            self.controller, "chants", "Chants / Culte"
-        )
-        self.chants_controls.index_changed.connect(self._on_controls_index_changed)
-        projection_layout.addWidget(self.chants_controls)
-        right_layout.addWidget(projection_group, 2)
-        splitter.addWidget(right)
-
-        splitter.setSizes([250, 460, 320])
-        return page
-
     # ---------- Mode Bible ----------
     def _build_bible_page(self):
         self.bible_panel = BiblePanel()
         self.bible_panel.close_requested.connect(self._go_home)
         self.bible_panel.selection_changed.connect(self._on_bible_selection)
         self.bible_panel.project_requested.connect(self._on_bible_project)
-        self.bible_panel.service_add_requested.connect(self._on_passage_add_to_service)
 
         # Pas de bouton « Projeter » ici : le navigateur a « Projeter le verset ».
         self.bible_controls = ProjectionControls(
@@ -320,8 +198,6 @@ class ControlWindow(QMainWindow):
         outer.addSpacing(32)
 
         cards = [
-            ("🎵", "Chants / Culte", "Bibliothèque de chants, ordre du culte et projection.",
-             self._show_chants),
             ("📖", "Bible", "Naviguer dans les livres et projeter des versets.",
              self._open_bible),
             ("ℹ️", "À propos", "Informations sur l'application.",
@@ -341,9 +217,6 @@ class ControlWindow(QMainWindow):
         return page
 
     # ---------- Navigation entre pages ----------
-    def _show_chants(self):
-        self.stack.setCurrentWidget(self.control_page)
-
     def _open_bible(self):
         self.stack.setCurrentWidget(self.bible_page)
 
@@ -351,11 +224,8 @@ class ControlWindow(QMainWindow):
         self.stack.setCurrentWidget(self.home_page)
 
     def _active_controls(self):
-        """Poste de contrôle du mode actuellement affiché (ou None sur l'accueil)."""
-        current = self.stack.currentWidget()
-        if current is self.control_page:
-            return self.chants_controls
-        if current is self.bible_page:
+        """Poste de contrôle du mode affiché (ou None sur l'accueil)."""
+        if self.stack.currentWidget() is self.bible_page:
             return self.bible_controls
         return None
 
@@ -373,37 +243,19 @@ class ControlWindow(QMainWindow):
             return act
 
         file_menu = bar.addMenu("Fichier")
-        file_menu.addAction(action("Nouveau chant", self._new_song, QKeySequence.New))
-        file_menu.addAction(action("Enregistrer le chant", self._save_song, QKeySequence.Save))
-        file_menu.addAction(action("Supprimer le chant", self._delete_song))
-        file_menu.addSeparator()
         file_menu.addAction(action("Quitter", self.close, QKeySequence.Quit))
 
-        songs_menu = bar.addMenu("Chants")
-        songs_menu.addAction(action("Nouveau chant", self._new_song))
-        songs_menu.addAction(action("Ajouter au culte", self._add_current_song_to_service))
-        songs_menu.addAction(action("Rechercher un chant", self._focus_song_search, QKeySequence.Find))
-
-        service_menu = bar.addMenu("Culte")
-        service_menu.addAction(action("Monter l'élément", lambda: self._move_service_item(-1)))
-        service_menu.addAction(action("Descendre l'élément", lambda: self._move_service_item(1)))
-        service_menu.addAction(action("Retirer l'élément", self._remove_service_item))
-        service_menu.addSeparator()
-        service_menu.addAction(action("Vider l'ordre du culte", self._clear_service))
-
-        # « Affichage » ne garde que la navigation entre les vues : la projection
-        # se pilote depuis le poste de contrôle embarqué dans chaque mode.
+        # « Affichage » : navigation entre les vues. La projection se pilote depuis
+        # le poste de contrôle embarqué dans le mode Bible.
         view_menu = bar.addMenu("Affichage")
         view_menu.addAction(action("Accueil", self._go_home, "Ctrl+H"))
-        view_menu.addAction(action("Chants / Culte", self._show_chants, "F3"))
         view_menu.addAction(action("Bible", self._open_bible, "F2"))
 
         help_menu = bar.addMenu("Aide")
         help_menu.addAction(action("À propos", self._show_about))
 
         # Raccourcis de projection (agissent sur le mode affiché) : conservés au
-        # niveau fenêtre pour le direct, mais retirés du menu pour éviter les
-        # doublons avec les boutons du poste de contrôle.
+        # niveau fenêtre pour le direct, mais hors menu (doublon avec les boutons).
         for text, handler, shortcut in (
             ("Projeter", self._menu_project, "F5"),
             ("Écran noir", self._menu_blackout, "F6"),
@@ -412,11 +264,6 @@ class ControlWindow(QMainWindow):
             ("Diapositive précédente", self._menu_prev, "Ctrl+Left"),
         ):
             self.addAction(action(text, handler, shortcut))
-
-    def _focus_song_search(self):
-        self._show_chants()
-        self.search_box.setFocus()
-        self.search_box.selectAll()
 
     def _menu_project(self):
         controls = self._active_controls()
@@ -444,152 +291,9 @@ class ControlWindow(QMainWindow):
             f"À propos de {theme.APP_NAME}",
             f"<b>{theme.APP_NAME}</b><br>"
             "Logiciel de présentation pour l'église.<br><br>"
-            "Projection des paroles de chants et des passages bibliques "
-            "sur un écran secondaire pendant les cultes.",
+            "Projection des passages bibliques sur un écran secondaire "
+            "pendant les cultes.",
         )
-
-    # ---------- Chants ----------
-    def _refresh_song_list(self):
-        self.song_list.clear()
-        for row in database.list_songs(self.search_box.text()):
-            item = QListWidgetItem(row["title"])
-            item.setData(Qt.UserRole, row["id"])
-            self.song_list.addItem(item)
-
-    def _on_song_selected(self, current, _previous):
-        if current is None:
-            return
-        song_id = current.data(Qt.UserRole)
-        row = database.get_song(song_id)
-        if row is None:
-            return
-        self.current_song_id = song_id
-        self.title_edit.setText(row["title"])
-        self.lyrics_edit.setPlainText(row["lyrics"])
-        self._refresh_slides(row["lyrics"])
-
-    def _refresh_slides(self, lyrics: str):
-        self.current_slides = slides.lyrics_to_slides(lyrics)
-        self.slide_list.blockSignals(True)
-        self.slide_list.clear()
-        for i, slide in enumerate(self.current_slides):
-            preview = slide.replace("\n", " / ")
-            item = QListWidgetItem(f"{i + 1}. {preview[:60]}")
-            item.setData(Qt.UserRole, slide)
-            self.slide_list.addItem(item)
-        self.slide_list.blockSignals(False)
-        self.chants_controls.load(self.current_slides, 0)
-        if self.current_slides:
-            self.slide_list.setCurrentRow(0)
-
-    def _on_slide_row_changed(self, current, _previous):
-        if current is None or self._syncing_slide:
-            return
-        self.chants_controls.set_index(self.slide_list.row(current))
-
-    def _on_controls_index_changed(self, index: int):
-        self._syncing_slide = True
-        self.slide_list.setCurrentRow(index)
-        self._syncing_slide = False
-
-    def _new_song(self):
-        self.current_song_id = None
-        self.title_edit.clear()
-        self.lyrics_edit.clear()
-        self._refresh_slides("")
-        self.title_edit.setFocus()
-
-    def _save_song(self):
-        title = self.title_edit.text().strip()
-        if not title:
-            QMessageBox.warning(self, "Titre manquant", "Merci de saisir un titre.")
-            return
-        lyrics = self.lyrics_edit.toPlainText()
-        self.current_song_id = database.save_song(self.current_song_id, title, lyrics)
-        service.update_song_label(self.current_song_id, title)
-        self._refresh_song_list()
-        self._refresh_service_list()
-        self._refresh_slides(lyrics)
-
-    def _delete_song(self):
-        item = self.song_list.currentItem()
-        if item is None:
-            return
-        song_id = item.data(Qt.UserRole)
-        confirm = QMessageBox.question(
-            self, "Confirmer", "Supprimer ce chant définitivement ?"
-        )
-        if confirm == QMessageBox.Yes:
-            database.delete_song(song_id)
-            self._new_song()
-            self._refresh_song_list()
-            self._refresh_service_list()
-
-    # ---------- Ordre du culte ----------
-    def _refresh_service_list(self):
-        self.service_list.clear()
-        for row in service.list_items():
-            prefix = "♪" if row["kind"] == "song" else "📖"
-            item = QListWidgetItem(f"{prefix} {row['label']}")
-            item.setData(Qt.UserRole, row["id"])
-            self.service_list.addItem(item)
-
-    def _add_current_song_to_service(self):
-        item = self.song_list.currentItem()
-        if item is None:
-            QMessageBox.information(
-                self, "Aucun chant", "Sélectionnez d'abord un chant dans la liste."
-            )
-            return
-        service.add_song(item.data(Qt.UserRole), item.text())
-        self._refresh_service_list()
-
-    def _on_passage_add_to_service(self, label: str, content: str):
-        service.add_passage(label, content)
-        self._refresh_service_list()
-
-    def _on_service_item_clicked(self, item: QListWidgetItem):
-        row = service.get_item(item.data(Qt.UserRole))
-        if row is None:
-            return
-        if row["kind"] == "song":
-            song = database.get_song(row["song_id"])
-            if song is None:
-                QMessageBox.warning(self, "Chant introuvable", "Ce chant a été supprimé.")
-                self._refresh_service_list()
-                return
-            self._refresh_slides(song["lyrics"])
-        else:
-            self._refresh_slides(row["content"])
-
-    def _move_service_item(self, delta: int):
-        item = self.service_list.currentItem()
-        if item is None:
-            return
-        item_id = item.data(Qt.UserRole)
-        service.move_item(item_id, delta)
-        self._refresh_service_list()
-        for i in range(self.service_list.count()):
-            if self.service_list.item(i).data(Qt.UserRole) == item_id:
-                self.service_list.setCurrentRow(i)
-                break
-
-    def _remove_service_item(self):
-        item = self.service_list.currentItem()
-        if item is None:
-            return
-        service.remove_item(item.data(Qt.UserRole))
-        self._refresh_service_list()
-
-    def _clear_service(self):
-        if self.service_list.count() == 0:
-            return
-        confirm = QMessageBox.question(
-            self, "Confirmer", "Vider tout l'ordre du culte ?"
-        )
-        if confirm == QMessageBox.Yes:
-            service.clear_items()
-            self._refresh_service_list()
 
     # ---------- Bible ----------
     def _on_bible_selection(self):

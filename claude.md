@@ -4,7 +4,9 @@ Ce fichier donne à Claude Code le contexte nécessaire pour travailler efficace
 
 ## Vue d'ensemble du projet
 
-**Logos Tabernacle** est une application de bureau de présentation pour l'église (type Holyrics/ProPresenter simplifié). Elle permet à un opérateur de piloter, depuis un poste de contrôle, l'affichage de paroles de chants sur un second écran (vidéoprojecteur) pendant les cultes.
+**Logos Tabernacle** est une application de bureau de présentation pour l'église (type Holyrics/ProPresenter simplifié). Elle permet à un opérateur de piloter, depuis un poste de contrôle, l'affichage de **passages bibliques** sur un second écran (vidéoprojecteur) pendant les cultes.
+
+> **Note** : la partie « Chants / Culte » (bibliothèque de chants, édition des paroles, ordre du culte) a été **retirée** — l'application se concentre désormais sur la projection de la Bible. Le `cahier_des_charges.md` décrit encore ces fonctionnalités : le considérer comme historique sur ce point.
 
 Le cahier des charges complet (fonctionnalités V1/V2/V3, exigences, planning) est dans `cahier_des_charges.md` à la racine — s'y référer avant d'ajouter une fonctionnalité pour vérifier son statut (Must/Should/Could) et sa phase prévue.
 
@@ -25,22 +27,18 @@ Le cahier des charges complet (fonctionnalités V1/V2/V3, exigences, planning) e
 │   ├── assets/
 │   │   └── bible_ls1910.json.gz # Bible Louis Segond 1910 (domaine public), embarquée
 │   ├── data/                   # Couche données — AUCUN import Qt ici
-│   │   ├── database.py         # Connexion SQLite, CREATE TABLE, CRUD des chants
+│   │   ├── database.py         # Connexion SQLite + création des tables de la Bible
 │   │   ├── bible.py            # Import + requêtes sur la Bible embarquée
-│   │   ├── service.py          # Ordre du culte (liste ordonnée chants/passages)
-│   │   └── slides.py           # Logique de contenu : paroles/passages -> diapositives
+│   │   └── slides.py           # Mise en forme des passages bibliques -> diapositives
 │   └── ui/                     # Couche interface — AUCUN SQL ici
-│       ├── control_window.py   # Fenêtre principale : accueil + modes (Chants/Culte, Bible)
+│       ├── control_window.py   # Fenêtre principale : accueil + mode Bible
 │       ├── bible_panel.py      # Mode « Navigateur biblique » (grilles livres/chapitres/versets), émet des signaux
 │       ├── projection_controller.py # Contrôleur partagé : unique fenêtre de projection + exclusivité (un seul mode à l'antenne)
 │       ├── projection_controls.py   # Poste de contrôle réutilisable embarqué par chaque mode
 │       ├── projection_window.py # Fenêtre plein écran sans bordure sur l'écran secondaire
 │       └── theme.py            # Palette de couleurs + feuille de style Qt (QSS), basé sur le logo
 ├── tests/                      # Tests pytest
-│   ├── test_slides.py          # Découpage paroles -> diapos (logique pure)
-│   ├── test_database.py        # CRUD SQLite sur base temporaire
 │   ├── test_bible.py           # Import/requêtes Bible + mise en forme des passages
-│   ├── test_service.py         # Ordre du culte (ajout, déplacement, synchronisation)
 │   ├── test_bible_panel.py     # Panneau Bible en offscreen
 │   └── test_control_window.py  # Fumée UI en QT_QPA_PLATFORM=offscreen
 ├── README.md                   # Guide d'installation/utilisation opérateur
@@ -50,16 +48,15 @@ Le cahier des charges complet (fonctionnalités V1/V2/V3, exigences, planning) e
 
 ### Rôle de chaque module
 
-- **`logos/data/database.py`** : connexion SQLite et création de **toutes** les tables (`init_db`), plus le CRUD des chants. Les autres modules `data/` font leurs requêtes via `get_connection()` — aucun SQL hors de `logos/data/`. Ce sous-package ne doit jamais importer Qt.
+- **`logos/data/database.py`** : connexion SQLite et création des tables de la **Bible** (`init_db`, `CREATE TABLE IF NOT EXISTS`). Les autres modules `data/` font leurs requêtes via `get_connection()` — aucun SQL hors de `logos/data/`. Ce sous-package ne doit jamais importer Qt.
 - **`logos/data/bible.py`** : Bible Louis Segond 1910 embarquée dans `logos/assets/` (gzip) et importée dans SQLite au premier lancement (`ensure_imported()`, appelé par `app.main`). L'application reste 100 % hors ligne.
-- **`logos/data/service.py`** : ordre du culte persistant — liste ordonnée d'éléments `song` (référence vers un chant, paroles chargées en direct) ou `passage` (texte figé au moment de l'ajout). `database.delete_song` retire aussi le chant du culte.
-- **`logos/data/slides.py`** : `lyrics_to_slides()` découpe les paroles en diapositives sur les lignes vides (`\n\n`). C'est la seule logique de "parsing" du contenu — toute nouvelle logique de contenu (versets V2, etc.) va dans `logos/data/`, pas dans l'UI.
+- **`logos/data/slides.py`** : `passage_label()` et `passage_to_text()` mettent en forme un passage biblique en texte projetable (une diapositive par verset : texte + référence). Logique pure — toute nouvelle logique de contenu va dans `logos/data/`, pas dans l'UI.
 - **`logos/data/bible.py`** expose aussi les données de référence d'affichage : `book_abbreviation(id)` (abréviations canoniques des 66 livres pour la grille des livres), `testament(id)` (Ancien/Nouveau) et `get_chapter(book_id, chapter)` (tous les versets d'un chapitre pour la colonne de lecture).
-- **`logos/ui/bible_panel.py`** : navigateur biblique reproduisant la maquette « Bible Navigator » (barre supérieure logo/recherche/LSG-KJV, colonne de lecture avec versets cliquables, grille des livres, grilles chapitres/versets, barre de statut). L'état de projection n'est **pas** affiché ici (l'indicateur « à l'antenne » vit dans le `ProjectionControls` du mode). C'est le **staging** du mode Bible : il ne projette pas lui-même. Il expose `current_deck()` (un verset = une diapo, index = verset sélectionné) et émet `selection_changed` (sélection modifiée), `project_requested` (« Projeter le verset »), `service_add_requested` et `close_requested` (bouton « ‹ Retour » → accueil). La projection réelle passe par le `ProjectionControls` du mode Bible. Contient une `FlowLayout` (repli des cartes) car Qt n'en fournit pas. Les boutons de lecture sont stylés en inline (via constantes `theme`) car le cascade QSS des parents stylés neutralise l'accent doré des `QPushButton` primaires.
+- **`logos/ui/bible_panel.py`** : navigateur biblique reproduisant la maquette « Bible Navigator » (barre supérieure logo/recherche/LSG-KJV, colonne de lecture avec versets cliquables, grille des livres, grilles chapitres/versets, barre de statut). L'état de projection n'est **pas** affiché ici (l'indicateur « à l'antenne » vit dans le `ProjectionControls` du mode). C'est le **staging** du mode Bible : il ne projette pas lui-même. Il expose `current_deck()` (un verset = une diapo, index = verset sélectionné) et émet `selection_changed` (sélection modifiée), `project_requested` (« Projeter le verset ») et `close_requested` (bouton « ‹ Retour » → accueil). La projection réelle passe par le `ProjectionControls` du mode Bible. Contient une `FlowLayout` (repli des cartes) car Qt n'en fournit pas. Les boutons de lecture sont stylés en inline (via constantes `theme`) car le cascade QSS des parents stylés neutralise l'accent doré des `QPushButton` primaires.
 - **`logos/ui/projection_controller.py`** : `ProjectionController(QObject)` — possède l'**unique** `ProjectionWindow` et l'état de projection **partagé** entre tous les modes (écran cible, taille du texte, écran noir) plus le mode actuellement **à l'antenne**. Applique l'exclusivité : `project(key, text)` met un seul mode à l'antenne (coupe l'autre). Émet `changed` (état) et `screens_changed` (branchement/débranchement d'écran) pour synchroniser tous les postes de contrôle. Ne connaît pas les modes concrets (clé + libellé) et ne touche pas à `data`.
 - **`logos/ui/projection_controls.py`** : deux widgets. `ProjectionControls(QWidget)` — poste de contrôle **réutilisable** embarqué par chaque mode (aperçu en direct, navigation ◀/▶, « Projeter », « Écran noir », « Arrêter », **unique** indicateur « à l'antenne »). Reçoit un jeu de diapos via `load(slides, index)` ; pilote la projection via le `ProjectionController` partagé et se resynchronise sur ses signaux. Le bouton « Projeter » est optionnel (`show_project_button=False` pour la Bible, qui projette via son propre « Projeter le verset » — pas de doublon). `ProjectionSettingsBar(QWidget)` — réglages de projection **globaux** (écran cible + taille du texte), une seule instance pour toute l'appli : ces réglages ne sont **pas** répétés dans chaque mode.
 - **`logos/ui/projection_window.py`** : fenêtre `QWidget` sans bordure (`Qt.FramelessWindowHint`), positionnée via `show_on_screen(screen)` sur un `QScreen` Qt. Ne contient aucune logique métier — uniquement affichage (`set_text`, `set_font_size`, `toggle_blank`).
-- **`logos/ui/control_window.py`** : orchestration UI (seul module UI qui parle à `data`). Organise l'interface en `QStackedWidget` à trois pages — **accueil** (logo, titre, cartes `_HomeCard` : Chants/Culte, Bible, À propos ; affichée au démarrage), **mode Chants/Culte** (bibliothèque + édition + ordre du culte + son propre `ProjectionControls`) et **mode Bible** (le `BiblePanel` + son propre `ProjectionControls` en colonne latérale). Il n'y a **plus de « poste de contrôle » générique** : chaque mode embarque le sien. Un `ProjectionController` unique est partagé par les deux modes (une seule projection à la fois ; changer de page **ne coupe pas** la projection en cours — « garder la diapo à l'antenne »). Une `ProjectionSettingsBar` globale (écran + taille du texte) est placée **sous** le `QStackedWidget`, masquée sur l'accueil (`_update_settings_bar_visibility`). Synchronise la liste des diapos avec le poste de contrôle de chaque mode (garde `_syncing_slide` contre les boucles). Une **barre de menus** en haut (Fichier · Chants · Culte · Affichage · Aide, `setNativeMenuBar(False)`) offre une seconde voie d'accès. « Affichage » ne contient que la **navigation** (Accueil, Chants/Culte, Bible) : les actions de projection ne sont **pas** dans le menu (elles feraient doublon avec les boutons du poste de contrôle), mais leurs **raccourcis** restent actifs au niveau fenêtre — F5 Projeter, F6 Écran noir, Maj+F5 Arrêter, Ctrl+←/→ diapos — et agissent sur le **mode affiché** (`_active_controls()`).
+- **`logos/ui/control_window.py`** : orchestration UI (seul module UI qui parle à `data`). Organise l'interface en `QStackedWidget` à deux pages — **accueil** (logo, titre, cartes `_HomeCard` : Bible, À propos ; affichée au démarrage) et **mode Bible** (le `BiblePanel` + son propre `ProjectionControls` en colonne latérale). Un `ProjectionController` unique possède l'unique fenêtre de projection ; le cadre reste **extensible** (plusieurs modes possibles, exclusivité « un seul à l'antenne »), même s'il ne reste qu'un mode. Une `ProjectionSettingsBar` globale (écran + taille du texte) est placée **sous** le `QStackedWidget`, masquée sur l'accueil (`_update_settings_bar_visibility`). Une **barre de menus** en haut (Fichier · Affichage · Aide, `setNativeMenuBar(False)`) offre une seconde voie d'accès. « Affichage » ne contient que la **navigation** (Accueil, Bible) : les actions de projection ne sont **pas** dans le menu (doublon avec les boutons du poste de contrôle), mais leurs **raccourcis** restent actifs au niveau fenêtre — F5 Projeter, F6 Écran noir, Maj+F5 Arrêter, Ctrl+←/→ diapos — et agissent sur le **mode affiché** (`_active_controls()`).
 - **`logos/ui/theme.py`** : **toute couleur de l'UI doit passer par ce module.** Ne jamais coder une couleur en dur (`#RRGGBB`) directement dans les autres modules UI — ajouter/réutiliser une constante ici. La palette est dérivée du logo de l'église (or/bronze/noir). Boutons secondaires/destructeurs : `btn.setProperty("buttonStyle", "secondary"|"danger")` (stylés via la QSS).
 - **Piège QSS** : la feuille de style globale (`QWidget { font-size: 13px }`) écrase tout `QFont` posé par code. Pour une taille de texte spécifique (ex. le texte projeté), utiliser un `setStyleSheet` inline sur le widget (voir `ProjectionWindow._apply_label_style`), jamais `setFont`.
 - **Vérification visuelle sans écran** : la fenêtre se capture en offscreen (`QT_QPA_PLATFORM=offscreen`, `widget.grab().save("out.png")`) — utile pour contrôler un changement d'UI depuis la sandbox.
@@ -103,6 +100,6 @@ Les tests couvrent la logique pure (`logos/data/`), le CRUD SQLite (base tempora
 
 ## Roadmap (voir cahier_des_charges.md pour le détail)
 
-- **V1 (fonctionnalités terminées ; packaging PyInstaller restant)** : gestion des chants, projection plein écran multi-écran, navigation, écran noir, sauvegarde locale.
-- **V2 (en cours)** : versets bibliques ✅, ordre du culte/playlist ✅, aperçu en direct ✅ — restent : arrière-plans personnalisés, raccourcis clavier.
-- **V3+** : télécommande mobile, multi-postes en réseau local, historique d'usage.
+- **Actuel** : navigateur biblique (LSG 1910 embarquée, hors ligne), projection plein écran multi-écran, navigation entre versets, écran noir, aperçu en direct, taille du texte réglable. Packaging PyInstaller restant.
+- **Retiré** : gestion des chants, ordre du culte/playlist (voir la note en tête de fichier).
+- **Pistes** : arrière-plans personnalisés, KJV/autres versions, télécommande mobile, historique d'usage.

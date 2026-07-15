@@ -1,13 +1,7 @@
 """
-Découpage du contenu en diapositives. Logique pure (pas de SQL, pas de Qt)
-pour rester testable et réutilisable (chants aujourd'hui, versets en V2).
+Mise en forme des passages bibliques en diapositives. Logique pure (pas de SQL,
+pas de Qt) pour rester testable.
 """
-
-
-def lyrics_to_slides(lyrics: str) -> list[str]:
-    """Découpe le texte des paroles en diapositives (séparées par une ligne vide)."""
-    blocks = [b.strip() for b in lyrics.split("\n\n")]
-    return [b for b in blocks if b]
 
 
 def passage_label(book_name: str, chapter: int, verse_start: int, verse_end: int) -> str:
@@ -19,7 +13,7 @@ def passage_label(book_name: str, chapter: int, verse_start: int, verse_end: int
 
 def passage_to_text(book_name: str, chapter: int, verses) -> str:
     """Met en forme un passage en texte projetable : une diapositive par verset
-    (texte + référence), au même format que des paroles de chant."""
+    (texte + référence)."""
     slides = [
         f"{text}\n{book_name} {chapter}:{verse}"
         for verse, text in verses

@@ -90,5 +90,4 @@ def test_panneau_desactive_sans_bible(qapp):
 
     panel = BiblePanel()  # base vide : la Bible n'est pas importée
     assert not panel.project_btn.isEnabled()
-    assert not panel.add_btn.isEnabled()
     assert panel.current_deck() == ([], 0)

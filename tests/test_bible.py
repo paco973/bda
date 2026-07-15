@@ -66,7 +66,7 @@ def test_label_et_texte_projetable():
     verses = bible.get_passage(1, 1, 1, 2)
     text = slides.passage_to_text("Genèse", 1, verses)
     # Une diapositive par verset, référence sur la dernière ligne
-    parts = slides.lyrics_to_slides(text)
+    parts = text.split("\n\n")
     assert len(parts) == 2
     assert parts[0].endswith("Genèse 1:1")
     assert parts[1].startswith("La terre était informe")
