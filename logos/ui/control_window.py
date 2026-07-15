@@ -83,10 +83,24 @@ class ControlWindow(QMainWindow):
 
         self._build_ui()
 
+        # Le nombre de versets qui tiennent dépend de la taille du texte et de
+        # l'écran cible : recharger le jeu Bible quand l'un des deux change.
+        self._last_fit_key = self._fit_key()
+        self.controller.changed.connect(self._on_controller_changed)
+
         # Branchement/débranchement d'un écran pendant l'exécution.
         app = QGuiApplication.instance()
         app.screenAdded.connect(lambda _s: self.controller.refresh_screens())
         app.screenRemoved.connect(lambda _s: self.controller.refresh_screens())
+
+    def _fit_key(self):
+        return (self.controller.font_size(), id(self.controller.screen()))
+
+    def _on_controller_changed(self):
+        key = self._fit_key()
+        if key != self._last_fit_key:
+            self._last_fit_key = key
+            self._on_bible_selection()  # re-pagine selon la place disponible
 
     # ---------- Construction de l'interface ----------
     def _build_ui(self):
@@ -125,6 +139,8 @@ class ControlWindow(QMainWindow):
     # ---------- Mode Bible ----------
     def _build_bible_page(self):
         self.bible_panel = BiblePanel()
+        # Ne regrouper que les versets qui tiennent dans la projection.
+        self.bible_panel.set_fit_predicate(self.controller.text_fits)
         self.bible_panel.close_requested.connect(self._go_home)
         self.bible_panel.selection_changed.connect(self._on_bible_selection)
         self.bible_panel.project_requested.connect(self._on_bible_project)
@@ -304,8 +320,9 @@ class ControlWindow(QMainWindow):
         self.bible_controls.project()
 
     def _on_bible_controls_index(self, index: int):
-        # Navigation depuis le poste de contrôle Bible : sélectionne le verset.
-        self.bible_panel.select_verse(index + 1)
+        # Navigation depuis le poste de contrôle Bible : sélectionne la
+        # diapositive (groupe de versets) correspondante.
+        self.bible_panel.select_slide(index)
 
     def closeEvent(self, event):
         self.controller.close()

@@ -9,10 +9,14 @@ coupe automatiquement celui qui était à l'antenne.
 Ne connaît pas les modes concrets (il les identifie par une clé) et ne dépend
 d'aucune couche `data` : il coordonne l'affichage, rien d'autre.
 """
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import QObject, Signal, Qt
+from PySide6.QtGui import QGuiApplication, QFont, QFontMetrics
 
 from logos.ui.projection_window import ProjectionWindow
+
+# Marges de la fenêtre de projection (voir ProjectionWindow) : à retrancher de
+# l'écran pour connaître la surface réellement disponible pour le texte.
+_PROJECTION_MARGIN = 40
 
 
 class ProjectionController(QObject):
@@ -83,6 +87,30 @@ class ProjectionController(QObject):
             self._pick_default_screen()
         self.screens_changed.emit()
         self.changed.emit()
+
+    # ------------------------- Mesure de place --------------------------- #
+    def text_fits(self, text: str) -> bool:
+        """`text` tient-il dans la surface de projection à la taille actuelle ?
+
+        Mesuré contre l'écran cible et la police projetée (même taille/graisse
+        que `ProjectionWindow`). Sans écran cible, aucune contrainte (True) :
+        on ne peut pas mesurer, donc on ne bride pas.
+        """
+        screen = self._screen
+        if screen is None:
+            return True
+        geo = screen.geometry()
+        avail_w = geo.width() - 2 * _PROJECTION_MARGIN
+        avail_h = geo.height() - 2 * _PROJECTION_MARGIN
+        if avail_w <= 0 or avail_h <= 0:
+            return True
+        font = QFont()
+        font.setPointSize(self._font_size)
+        font.setWeight(QFont.Bold)
+        rect = QFontMetrics(font).boundingRect(
+            0, 0, avail_w, 0, Qt.TextWordWrap | Qt.AlignCenter, text
+        )
+        return rect.height() <= avail_h
 
     # ------------------------- Taille du texte --------------------------- #
     def font_size(self) -> int:

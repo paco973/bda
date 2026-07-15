@@ -25,12 +25,25 @@ from PySide6.QtWidgets import (
     QLayout,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
 )
 
 from logos.data import bible, slides
 from logos.ui import theme
 
 _LOGO_PATH = Path(__file__).parent.parent / "assets" / "logo.png"
+
+# Chiffres en exposant Unicode : préfixent chaque verset dans le texte projeté
+# pour distinguer visuellement les versets d'une même diapositive. On reste en
+# texte brut (pas de HTML) pour que la mesure de place demeure exacte.
+_SUPERSCRIPT = {
+    "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+    "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+}
+
+
+def _superscript(number: int) -> str:
+    return "".join(_SUPERSCRIPT[d] for d in str(number))
 
 
 # Styles inline des boutons de lecture (indépendants du cascade Qt des parents
@@ -295,6 +308,8 @@ class BiblePanel(QWidget):
         self._verse = None          # verset sélectionné (int) ou None
         self._chapter_verses = []   # (verse, text) du chapitre courant
         self._book_cards = {}       # id -> _BookCard
+        self._verses_per_slide = 1  # nombre MAX de versets regroupés par diapositive
+        self._fits = None           # prédicat (texte)->bool : le texte tient-il à l'écran ?
 
         self._build_ui()
 
@@ -445,6 +460,22 @@ class BiblePanel(QWidget):
         footer_col = QVBoxLayout(footer)
         footer_col.setContentsMargins(20, 12, 20, 12)
         footer_col.setSpacing(8)
+
+        # Nombre de versets regroupés sur une même diapositive projetée.
+        opts_row = QHBoxLayout()
+        opts_label = QLabel("Versets par diapositive")
+        opts_label.setStyleSheet("background:transparent;")
+        self.verses_spin = QSpinBox()
+        self.verses_spin.setRange(1, 20)
+        self.verses_spin.setValue(self._verses_per_slide)
+        self.verses_spin.setToolTip(
+            "Regroupe ce nombre de versets consécutifs sur chaque diapositive."
+        )
+        self.verses_spin.valueChanged.connect(self._on_verses_per_slide_changed)
+        opts_row.addWidget(opts_label)
+        opts_row.addStretch()
+        opts_row.addWidget(self.verses_spin)
+        footer_col.addLayout(opts_row)
 
         self.project_btn = QPushButton("Projeter le verset")
         self.project_btn.setCursor(Qt.PointingHandCursor)
@@ -665,33 +696,114 @@ class BiblePanel(QWidget):
         """Sélection d'un verset depuis l'extérieur (navigation du poste)."""
         self._select_verse(verse)
 
+    def set_fit_predicate(self, fits):
+        """Injecte un prédicat `(texte)->bool` : le texte tient-il dans la
+        projection ? Utilisé pour ne regrouper que les versets qui rentrent."""
+        self._fits = fits
+
+    def select_slide(self, index: int):
+        """Sélection d'une diapositive (groupe de versets) par son index."""
+        groups, _index = self._deck_groups()
+        if not groups:
+            return
+        index = max(0, min(index, len(groups) - 1))
+        self._select_verse(groups[index][0][0])
+
+    def _render_group(self, group) -> str:
+        """Texte projetable d'un groupe de versets (texte + référence de plage).
+
+        Quand plusieurs versets partagent une diapositive, chacun est mis sur son
+        propre paragraphe et préfixé de son numéro en exposant pour les
+        distinguer ; un verset seul reste sans numéro (la référence sous le texte
+        suffit à l'identifier)."""
+        if len(group) > 1:
+            block = "\n\n".join(f"{_superscript(v)} {text}" for v, text in group)
+        else:
+            block = group[0][1]
+        ref = slides.passage_label(
+            self._book["name"], self._chapter, group[0][0], group[-1][0]
+        )
+        return f"{block}\n{ref}"
+
+    def _group_from(self, pos: int, end: int):
+        """Groupe débutant à `pos` : le verset et les suivants, jusqu'à
+        `verses_per_slide` versets ET tant que le texte tient à l'écran
+        (`self._fits`). Toujours au moins un verset."""
+        verses = self._chapter_verses
+        n = max(1, self._verses_per_slide)
+        group = [verses[pos]]
+        k = pos + 1
+        while k < end and len(group) < n:
+            trial = group + [verses[k]]
+            if self._fits is not None and not self._fits(self._render_group(trial)):
+                break
+            group.append(verses[k])
+            k += 1
+        return group
+
+    def _page(self, start: int, end: int):
+        """Découpe `verses[start:end]` en groupes successifs (pavage glouton)."""
+        groups = []
+        i = start
+        while i < end:
+            group = self._group_from(i, end)
+            groups.append(group)
+            i += len(group)
+        return groups
+
+    def _deck_groups(self):
+        """(liste de groupes, index du groupe sélectionné). Le verset sélectionné
+        débute toujours son groupe ; les versets avant l'ancre forment des
+        diapositives en tête, pour rester navigables."""
+        verses = self._chapter_verses
+        if self._book is None or not verses:
+            return [], 0
+        sel = self._verse if any(v == self._verse for v, _t in verses) else verses[0][0]
+        sel_pos = next(k for k, (v, _t) in enumerate(verses) if v == sel)
+        before = self._page(0, sel_pos)
+        after = self._page(sel_pos, len(verses))
+        return before + after, len(before)
+
+    def _group_verses(self, verse):
+        """Le verset `verse` et les suivants effectivement regroupés avec lui."""
+        verses = [v for v, _t in self._chapter_verses]
+        if verse not in verses:
+            return [verse]
+        pos = verses.index(verse)
+        return [v for v, _t in self._group_from(pos, len(verses))]
+
     def _select_verse(self, verse):
         self._verse = verse
+        group = set(self._group_verses(verse))
         for v, row in getattr(self, "_verse_rows", {}).items():
-            row.set_active(v == verse)
+            row.set_active(v in group)
         for v, btn in getattr(self, "_verse_buttons", {}).items():
-            btn.set_active(v == verse)
-        # Fait défiler la lecture jusqu'au verset choisi.
-        row = getattr(self, "_verse_rows", {}).get(verse)
+            btn.set_active(v in group)
+        # Fait défiler la lecture jusqu'au premier verset du groupe.
+        anchor = min(group) if group else verse
+        row = getattr(self, "_verse_rows", {}).get(anchor)
         if row is not None:
             self.reading_area.ensureWidgetVisible(row)
         self._update_status_texts()
         self.selection_changed.emit()
 
+    def _on_verses_per_slide_changed(self, value: int):
+        self._verses_per_slide = max(1, value)
+        self.project_btn.setText(
+            "Projeter le verset" if self._verses_per_slide == 1 else "Projeter les versets"
+        )
+        # Rafraîchit le surlignage du groupe et recharge le jeu de diapositives.
+        self._select_verse(self._verse or 1)
+
     def current_deck(self):
         """(liste de diapositives, index sélectionné) du chapitre courant.
 
-        Une diapositive par verset (texte + référence), prête à projeter.
+        Chaque diapositive regroupe jusqu'à `verses_per_slide` versets, mais
+        **seulement ceux qui tiennent** dans la projection (`set_fit_predicate`).
+        Le verset sélectionné débute toujours sa diapositive (réf. « Jean 3:16-18 »).
         """
-        if self._book is None or not self._chapter_verses:
-            return [], 0
-        deck = [
-            f"{text}\n{self._book['name']} {self._chapter}:{verse}"
-            for verse, text in self._chapter_verses
-        ]
-        index = (self._verse or 1) - 1
-        index = max(0, min(index, len(deck) - 1))
-        return deck, index
+        groups, index = self._deck_groups()
+        return [self._render_group(g) for g in groups], index
 
     # --------------------------- Recherche -------------------------------- #
     def _on_search(self, text):
@@ -716,7 +828,13 @@ class BiblePanel(QWidget):
     def _update_status_texts(self):
         self.status_left.setText(f"{bible.TRANSLATION_CODE} · {self._current_reference()}")
         if self._verse:
-            self.status_right.setText(f"Verset {self._verse} sélectionné")
+            group = self._group_verses(self._verse)
+            if len(group) > 1:
+                self.status_right.setText(
+                    f"Versets {group[0]}-{group[-1]} sélectionnés"
+                )
+            else:
+                self.status_right.setText(f"Verset {self._verse} sélectionné")
         else:
             self.status_right.setText("Sélectionnez un verset")
 
