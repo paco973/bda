@@ -39,5 +39,29 @@ def init_db():
         )
         """
     )
+    # Prédications (importées depuis logos/assets/ via le script d'import).
+    # `letter`/`prefix` sont dérivés du titre à l'import pour un regroupement rapide.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS predications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date_code TEXT NOT NULL,
+            title_fr TEXT NOT NULL,
+            title_en TEXT NOT NULL DEFAULT '',
+            letter TEXT NOT NULL,
+            prefix TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS predication_paragraphs (
+            predication_id INTEGER NOT NULL,
+            number INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            PRIMARY KEY (predication_id, number)
+        )
+        """
+    )
     conn.commit()
     conn.close()

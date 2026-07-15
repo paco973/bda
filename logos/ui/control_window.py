@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from logos.ui import theme
 from logos.ui.bible_panel import BiblePanel, _circular_logo
+from logos.ui.predication_panel import PredicationPanel
 from logos.ui.projection_controller import ProjectionController
 from logos.ui.projection_controls import ProjectionControls, ProjectionSettingsBar
 
@@ -107,10 +108,12 @@ class ControlWindow(QMainWindow):
         self.stack = QStackedWidget()
 
         self.bible_page = self._build_bible_page()
+        self.predication_page = self._build_predication_page()
         self.home_page = self._build_home_page()
 
         self.stack.addWidget(self.home_page)
         self.stack.addWidget(self.bible_page)
+        self.stack.addWidget(self.predication_page)
         self.stack.setCurrentWidget(self.home_page)
 
         # Réglages de projection globaux (écran + taille du texte), sous les pages.
@@ -178,6 +181,45 @@ class ControlWindow(QMainWindow):
         self._on_bible_selection()
         return page
 
+    # ---------- Mode Prédications ----------
+    def _build_predication_page(self):
+        self.predication_panel = PredicationPanel()
+        self.predication_panel.close_requested.connect(self._go_home)
+        self.predication_panel.selection_changed.connect(self._on_predication_selection)
+        self.predication_panel.project_requested.connect(self._on_predication_project)
+
+        # Projection via « Projeter le paragraphe » du navigateur (pas de doublon).
+        self.predication_controls = ProjectionControls(
+            self.controller, "predication", "Prédications", show_project_button=False
+        )
+        self.predication_controls.index_changed.connect(self._on_predication_controls_index)
+
+        side = QFrame()
+        side.setFixedWidth(300)
+        side.setStyleSheet(
+            f"background:{theme.COLOR_SURFACE};"
+            f" border-left:1px solid {theme.COLOR_BORDER_SUBTLE};"
+        )
+        side_layout = QVBoxLayout(side)
+        side_layout.setContentsMargins(16, 16, 16, 16)
+        title = QLabel("Projection")
+        title.setStyleSheet(
+            f"color:{theme.COLOR_TEXT_MUTED}; font-size:11px; font-weight:700;"
+            f" letter-spacing:2px; background:transparent;"
+        )
+        side_layout.addWidget(title)
+        side_layout.addWidget(self.predication_controls)
+
+        page = QWidget()
+        layout = QHBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.predication_panel, 1)
+        layout.addWidget(side)
+
+        self._on_predication_selection()
+        return page
+
     # ---------- Page d'accueil ----------
     def _build_home_page(self):
         page = QWidget()
@@ -216,6 +258,8 @@ class ControlWindow(QMainWindow):
         cards = [
             ("📖", "Bible", "Naviguer dans les livres et projeter des versets.",
              self._open_bible),
+            ("🎙️", "Prédications", "Parcourir les prédications et projeter des paragraphes.",
+             self._open_predications),
             ("ℹ️", "À propos", "Informations sur l'application.",
              self._show_about),
         ]
@@ -236,13 +280,19 @@ class ControlWindow(QMainWindow):
     def _open_bible(self):
         self.stack.setCurrentWidget(self.bible_page)
 
+    def _open_predications(self):
+        self.stack.setCurrentWidget(self.predication_page)
+
     def _go_home(self):
         self.stack.setCurrentWidget(self.home_page)
 
     def _active_controls(self):
         """Poste de contrôle du mode affiché (ou None sur l'accueil)."""
-        if self.stack.currentWidget() is self.bible_page:
+        current = self.stack.currentWidget()
+        if current is self.bible_page:
             return self.bible_controls
+        if current is self.predication_page:
+            return self.predication_controls
         return None
 
     # ---------- Barre de menus ----------
@@ -266,6 +316,7 @@ class ControlWindow(QMainWindow):
         view_menu = bar.addMenu("Affichage")
         view_menu.addAction(action("Accueil", self._go_home, "Ctrl+H"))
         view_menu.addAction(action("Bible", self._open_bible, "F2"))
+        view_menu.addAction(action("Prédications", self._open_predications, "F4"))
 
         help_menu = bar.addMenu("Aide")
         help_menu.addAction(action("À propos", self._show_about))
@@ -323,6 +374,18 @@ class ControlWindow(QMainWindow):
         # Navigation depuis le poste de contrôle Bible : sélectionne la
         # diapositive (groupe de versets) correspondante.
         self.bible_panel.select_slide(index)
+
+    # ---------- Prédications ----------
+    def _on_predication_selection(self):
+        deck, index = self.predication_panel.current_deck()
+        self.predication_controls.load(deck, index)
+
+    def _on_predication_project(self):
+        self.predication_controls.project()
+
+    def _on_predication_controls_index(self, index: int):
+        # Navigation depuis le poste de contrôle : sélectionne le paragraphe.
+        self.predication_panel.select_slide(index)
 
     def closeEvent(self, event):
         self.controller.close()

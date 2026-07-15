@@ -30,6 +30,7 @@ COLOR_PRIMARY_PRESSED = GOLD_DARK
 COLOR_ON_PRIMARY_MUTED = "#5A4420"  # texte secondaire posé sur un fond doré
 COLOR_TEXT = GOLD_LIGHTEST        # texte principal sur fond sombre
 COLOR_TEXT_MUTED = GOLD_MID
+COLOR_TEXT_DISABLED = "#6E5A38"   # texte inactif (lettres sans prédication…)
 COLOR_TEXT_ON_PRIMARY = BLACK     # texte sur bouton doré (contraste)
 COLOR_DANGER = "#B33A2E"          # pour actions destructrices (supprimer)
 COLOR_DANGER_HOVER = "#CC4A3D"
