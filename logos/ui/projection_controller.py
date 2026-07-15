@@ -156,8 +156,9 @@ class ProjectionController(QObject):
         """Arrête toute projection (aucun mode à l'antenne)."""
         self._on_air = None
         self._live_text = ""
-        self.window.hide()
+        self.window.hide_projection()
         self.changed.emit()
 
     def close(self):
+        self.window.hide_projection()
         self.window.close()

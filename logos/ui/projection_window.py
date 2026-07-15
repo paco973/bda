@@ -41,17 +41,20 @@ class ProjectionWindow(QWidget):
         )
 
     def show_on_screen(self, screen):
-        """Positionne et affiche la fenêtre plein cadre sur l'écran donné.
-
-        On utilise une fenêtre sans bordure à la géométrie de l'écran plutôt que
-        `showFullScreen()` : ce dernier crée, sous macOS, un « espace » plein
-        écran que `hide()` ne quitte pas proprement (l'écran resterait noir à
-        l'arrêt de la projection). Ici, `hide()` retire nettement la fenêtre.
-        """
+        """Affiche la fenêtre en plein écran sur l'écran donné."""
         geometry = screen.geometry()
         self.setGeometry(geometry)
-        self.show()
+        self.showFullScreen()
         self.raise_()
+
+    def hide_projection(self):
+        """Masque la projection proprement.
+
+        On quitte d'abord l'état plein écran : sous macOS, masquer une fenêtre
+        laissée en plein écran laisse l'écran noir au lieu de le libérer.
+        """
+        self.setWindowState(self.windowState() & ~Qt.WindowFullScreen)
+        self.hide()
 
     def set_text(self, text: str):
         self._current_text = text
