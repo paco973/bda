@@ -1,7 +1,7 @@
 """
-Fenêtre principale : page d'accueil et mode Bible.
+Fenêtre principale : page d'accueil et modes Bible et Prédications.
 
-Le mode Bible embarque son propre poste de contrôle (`ProjectionControls`).
+Chaque mode embarque son propre poste de contrôle (`ProjectionControls`).
 Un `ProjectionController` partagé possède l'unique fenêtre de projection.
 """
 from PySide6.QtCore import Qt, Signal
@@ -18,8 +18,9 @@ from PySide6.QtWidgets import (
 )
 
 from logos.ui import theme
-from logos.ui.bible_panel import BiblePanel, _circular_logo
+from logos.ui.bible_panel import BiblePanel
 from logos.ui.predication_panel import PredicationPanel
+from logos.ui.widgets import circular_logo
 from logos.ui.projection_controller import ProjectionController
 from logos.ui.projection_controls import ProjectionControls, ProjectionSettingsBar
 
@@ -139,7 +140,33 @@ class ControlWindow(QMainWindow):
     def _update_settings_bar_visibility(self, *_):
         self.settings_bar.setVisible(self.stack.currentWidget() is not self.home_page)
 
-    # ---------- Mode Bible ----------
+    # ---------- Pages des modes ----------
+    def _mode_page(self, panel, controls):
+        """Page d'un mode : navigateur à gauche + colonne « Projection » à droite."""
+        side = QFrame()
+        side.setFixedWidth(300)
+        side.setStyleSheet(
+            f"background:{theme.COLOR_SURFACE};"
+            f" border-left:1px solid {theme.COLOR_BORDER_SUBTLE};"
+        )
+        side_layout = QVBoxLayout(side)
+        side_layout.setContentsMargins(16, 16, 16, 16)
+        title = QLabel("Projection")
+        title.setStyleSheet(
+            f"color:{theme.COLOR_TEXT_MUTED}; font-size:11px; font-weight:700;"
+            f" letter-spacing:2px; background:transparent;"
+        )
+        side_layout.addWidget(title)
+        side_layout.addWidget(controls)
+
+        page = QWidget()
+        layout = QHBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(panel, 1)
+        layout.addWidget(side)
+        return page
+
     def _build_bible_page(self):
         self.bible_panel = BiblePanel()
         # Ne regrouper que les versets qui tiennent dans la projection.
@@ -154,34 +181,11 @@ class ControlWindow(QMainWindow):
         )
         self.bible_controls.index_changed.connect(self._on_bible_controls_index)
 
-        side = QFrame()
-        side.setFixedWidth(300)
-        side.setStyleSheet(
-            f"background:{theme.COLOR_SURFACE};"
-            f" border-left:1px solid {theme.COLOR_BORDER_SUBTLE};"
-        )
-        side_layout = QVBoxLayout(side)
-        side_layout.setContentsMargins(16, 16, 16, 16)
-        title = QLabel("Projection")
-        title.setStyleSheet(
-            f"color:{theme.COLOR_TEXT_MUTED}; font-size:11px; font-weight:700;"
-            f" letter-spacing:2px; background:transparent;"
-        )
-        side_layout.addWidget(title)
-        side_layout.addWidget(self.bible_controls)
-
-        page = QWidget()
-        layout = QHBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self.bible_panel, 1)
-        layout.addWidget(side)
-
+        page = self._mode_page(self.bible_panel, self.bible_controls)
         # Charge le jeu de versets initial dans le poste de contrôle Bible.
         self._on_bible_selection()
         return page
 
-    # ---------- Mode Prédications ----------
     def _build_predication_page(self):
         self.predication_panel = PredicationPanel()
         self.predication_panel.close_requested.connect(self._go_home)
@@ -194,29 +198,7 @@ class ControlWindow(QMainWindow):
         )
         self.predication_controls.index_changed.connect(self._on_predication_controls_index)
 
-        side = QFrame()
-        side.setFixedWidth(300)
-        side.setStyleSheet(
-            f"background:{theme.COLOR_SURFACE};"
-            f" border-left:1px solid {theme.COLOR_BORDER_SUBTLE};"
-        )
-        side_layout = QVBoxLayout(side)
-        side_layout.setContentsMargins(16, 16, 16, 16)
-        title = QLabel("Projection")
-        title.setStyleSheet(
-            f"color:{theme.COLOR_TEXT_MUTED}; font-size:11px; font-weight:700;"
-            f" letter-spacing:2px; background:transparent;"
-        )
-        side_layout.addWidget(title)
-        side_layout.addWidget(self.predication_controls)
-
-        page = QWidget()
-        layout = QHBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self.predication_panel, 1)
-        layout.addWidget(side)
-
+        page = self._mode_page(self.predication_panel, self.predication_controls)
         self._on_predication_selection()
         return page
 
@@ -227,7 +209,7 @@ class ControlWindow(QMainWindow):
         outer.setContentsMargins(40, 40, 40, 40)
         outer.addStretch()
 
-        logo = _circular_logo(96)
+        logo = circular_logo(96)
         if logo is not None:
             logo_label = QLabel()
             logo_label.setPixmap(logo)
@@ -312,7 +294,7 @@ class ControlWindow(QMainWindow):
         file_menu.addAction(action("Quitter", self.close, QKeySequence.Quit))
 
         # « Affichage » : navigation entre les vues. La projection se pilote depuis
-        # le poste de contrôle embarqué dans le mode Bible.
+        # le poste de contrôle embarqué dans chaque mode.
         view_menu = bar.addMenu("Affichage")
         view_menu.addAction(action("Accueil", self._go_home, "Ctrl+H"))
         view_menu.addAction(action("Bible", self._open_bible, "F2"))
@@ -358,8 +340,8 @@ class ControlWindow(QMainWindow):
             f"À propos de {theme.APP_NAME}",
             f"<b>{theme.APP_NAME}</b><br>"
             "Logiciel de présentation pour l'église.<br><br>"
-            "Projection des passages bibliques sur un écran secondaire "
-            "pendant les cultes.",
+            "Projection des passages bibliques et des paragraphes de "
+            "prédications sur un écran secondaire pendant les cultes.",
         )
 
     # ---------- Bible ----------

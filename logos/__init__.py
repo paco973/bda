@@ -1,1 +1,1 @@
-"""Logos Tabernacle — application de projection de chants pour l'église."""
+"""BDA — application de projection (Bible, prédications) pour l'église Logos Tabernacle."""

@@ -2,18 +2,16 @@
 Navigateur biblique (fenêtre dédiée), fidèle à la maquette « Bible Navigator ».
 
 Disposition :
-  - barre supérieure : logo, titre, recherche de livre, bascule LSG/KJV, état écran ;
+  - barre supérieure : retour, logo, titre, recherche de livre, bascule LSG/KJV ;
   - colonne de lecture (gauche) : testament, référence, versets cliquables, actions ;
   - grille des livres (haut-droite) puis grilles chapitres / versets (bas-droite) ;
-  - barre de statut.
+  - barre de statut (traduction · référence à gauche, versets sélectionnés à droite).
 
 Aucune logique de projection ici : le panneau émet des signaux vers la fenêtre
 de contrôle, qui reste seule maîtresse de la fenêtre de projection.
 """
-from pathlib import Path
-
-from PySide6.QtCore import Qt, Signal, QRect, QSize, QPoint
-from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QFontMetrics
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QWidget,
     QFrame,
@@ -22,16 +20,19 @@ from PySide6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
     QHBoxLayout,
-    QLayout,
     QScrollArea,
-    QSizePolicy,
     QSpinBox,
 )
 
 from logos.data import bible, slides
 from logos.ui import theme
-
-_LOGO_PATH = Path(__file__).parent.parent / "assets" / "logo.png"
+from logos.ui.widgets import (
+    FlowHost,
+    NumButton,
+    NumberedTextRow,
+    circular_logo,
+    clear_layout,
+)
 
 # Chiffres en exposant Unicode : préfixent chaque verset dans le texte projeté
 # pour distinguer visuellement les versets d'une même diapositive. On reste en
@@ -44,113 +45,6 @@ _SUPERSCRIPT = {
 
 def _superscript(number: int) -> str:
     return "".join(_SUPERSCRIPT[d] for d in str(number))
-
-
-# Styles inline des boutons de lecture (indépendants du cascade Qt des parents
-# stylés, qui neutralise l'accent doré des QPushButton primaires).
-def _btn_primary_style() -> str:
-    return (
-        f"QPushButton {{ background:{theme.COLOR_PRIMARY}; color:{theme.COLOR_TEXT_ON_PRIMARY};"
-        f" border:none; border-radius:6px; padding:11px; font-size:13px; font-weight:700; }}"
-        f"QPushButton:hover {{ background:{theme.COLOR_PRIMARY_HOVER}; }}"
-        f"QPushButton:disabled {{ background:{theme.COLOR_SURFACE_ALT}; color:{theme.BRONZE}; }}"
-    )
-
-
-def _btn_secondary_style() -> str:
-    return (
-        f"QPushButton {{ background:transparent; color:{theme.COLOR_TEXT};"
-        f" border:1px solid {theme.COLOR_BORDER}; border-radius:6px; padding:11px 14px;"
-        f" font-size:13px; font-weight:600; }}"
-        f"QPushButton:hover {{ background:{theme.COLOR_SURFACE_ALT}; border-color:{theme.COLOR_PRIMARY}; }}"
-        f"QPushButton:disabled {{ color:{theme.BRONZE}; border-color:{theme.COLOR_BORDER_SUBTLE}; }}"
-    )
-
-
-def _btn_danger_style() -> str:
-    return (
-        f"QPushButton {{ background:{theme.COLOR_DANGER}; color:white;"
-        f" border:1px solid {theme.COLOR_DANGER}; border-radius:6px; padding:11px 14px;"
-        f" font-size:13px; font-weight:700; }}"
-        f"QPushButton:hover {{ background:{theme.COLOR_DANGER_HOVER}; border-color:{theme.COLOR_DANGER_HOVER}; }}"
-    )
-
-
-# --------------------------------------------------------------------------- #
-#  Disposition en flux (les cartes se replacent sur plusieurs lignes)
-# --------------------------------------------------------------------------- #
-class FlowLayout(QLayout):
-    """Dispose les widgets de gauche à droite en passant à la ligne au besoin."""
-
-    def __init__(self, parent=None, spacing=6):
-        super().__init__(parent)
-        self.setContentsMargins(0, 0, 0, 0)
-        self._spacing = spacing
-        self._items = []
-
-    def addItem(self, item):
-        self._items.append(item)
-
-    def count(self):
-        return len(self._items)
-
-    def itemAt(self, index):
-        return self._items[index] if 0 <= index < len(self._items) else None
-
-    def takeAt(self, index):
-        return self._items.pop(index) if 0 <= index < len(self._items) else None
-
-    def expandingDirections(self):
-        return Qt.Orientations(Qt.Orientation(0))
-
-    def hasHeightForWidth(self):
-        return True
-
-    def heightForWidth(self, width):
-        return self._do_layout(QRect(0, 0, width, 0), test_only=True)
-
-    def setGeometry(self, rect):
-        super().setGeometry(rect)
-        self._do_layout(rect, test_only=False)
-
-    def sizeHint(self):
-        return self.minimumSize()
-
-    def minimumSize(self):
-        size = QSize()
-        for item in self._items:
-            size = size.expandedTo(item.minimumSize())
-        return size
-
-    def _do_layout(self, rect, test_only):
-        x, y, line_height = rect.x(), rect.y(), 0
-        for item in self._items:
-            hint = item.sizeHint()
-            next_x = x + hint.width() + self._spacing
-            if next_x - self._spacing > rect.right() and line_height > 0:
-                x = rect.x()
-                y = y + line_height + self._spacing
-                next_x = x + hint.width() + self._spacing
-                line_height = 0
-            if not test_only:
-                item.setGeometry(QRect(QPoint(x, y), hint))
-            x = next_x
-            line_height = max(line_height, hint.height())
-        return y + line_height - rect.y()
-
-
-class _FlowHost(QWidget):
-    """Conteneur d'une FlowLayout qui déclare sa hauteur pour permettre le
-    défilement vertical à l'intérieur d'un QScrollArea (widgetResizable)."""
-
-    def __init__(self, spacing=6):
-        super().__init__()
-        self.setStyleSheet("background:transparent;")
-        self.flow = FlowLayout(self, spacing=spacing)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.setMinimumHeight(self.flow.heightForWidth(self.width()))
 
 
 # --------------------------------------------------------------------------- #
@@ -204,90 +98,6 @@ class _BookCard(QFrame):
 
     def mousePressEvent(self, event):
         self.clicked.emit(self.book_id)
-
-
-class _NumButton(QPushButton):
-    """Carré numéroté d'un chapitre ou d'un verset."""
-
-    picked = Signal(int)
-
-    def __init__(self, number: int):
-        super().__init__(str(number))
-        self.number = number
-        self.setFixedSize(42, 42)
-        self.setCursor(Qt.PointingHandCursor)
-        self.clicked.connect(lambda: self.picked.emit(self.number))
-        self.set_active(False)
-
-    def set_active(self, active: bool):
-        if active:
-            self.setStyleSheet(
-                f"QPushButton {{ background:{theme.COLOR_PRIMARY};"
-                f" color:{theme.COLOR_TEXT_ON_PRIMARY};"
-                f" border:1px solid {theme.COLOR_PRIMARY}; border-radius:5px;"
-                f" font-size:13px; font-weight:700; }}"
-            )
-        else:
-            self.setStyleSheet(
-                f"QPushButton {{ background:{theme.COLOR_SURFACE_ALT};"
-                f" color:{theme.COLOR_TEXT_MUTED};"
-                f" border:1px solid {theme.COLOR_BORDER_SUBTLE}; border-radius:5px;"
-                f" font-size:13px; font-weight:600; }}"
-                f" QPushButton:hover {{ border-color:{theme.COLOR_PRIMARY};"
-                f" color:{theme.COLOR_TEXT}; }}"
-            )
-
-
-class _VerseRow(QLabel):
-    """Un verset dans la colonne de lecture ; numéro en exposant, clic pour choisir."""
-
-    clicked = Signal(int)
-
-    def __init__(self, verse: int, text: str):
-        super().__init__()
-        self.verse = verse
-        self.setWordWrap(True)
-        self.setTextFormat(Qt.RichText)
-        self.setCursor(Qt.PointingHandCursor)
-        self._text = text
-        self.set_active(False)
-
-    def set_active(self, active: bool):
-        num_color = theme.COLOR_ON_PRIMARY_MUTED if active else theme.BRONZE
-        text_color = theme.COLOR_TEXT_ON_PRIMARY if active else theme.COLOR_TEXT
-        bg = theme.COLOR_PRIMARY if active else "transparent"
-        self.setText(
-            f'<sup style="color:{num_color}; font-family:sans-serif;'
-            f' font-weight:700;">{self.verse}</sup> {self._text}'
-        )
-        self.setStyleSheet(
-            f"color:{text_color}; background:{bg}; border-radius:5px;"
-            f" padding:{'6px 9px' if active else '2px 3px'};"
-            f" font-family:{theme.READING_FONT_FAMILY}; font-size:16px; font-weight:500;"
-        )
-
-    def mousePressEvent(self, event):
-        self.clicked.emit(self.verse)
-
-
-def _circular_logo(size: int):
-    """Pixmap circulaire du logo, ou None si l'asset est absent."""
-    if not _LOGO_PATH.exists():
-        return None
-    src = QPixmap(str(_LOGO_PATH))
-    if src.isNull():
-        return None
-    src = src.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-    result = QPixmap(size, size)
-    result.fill(Qt.transparent)
-    painter = QPainter(result)
-    painter.setRenderHint(QPainter.Antialiasing)
-    path = QPainterPath()
-    path.addEllipse(0, 0, size, size)
-    painter.setClipPath(path)
-    painter.drawPixmap(0, 0, src)
-    painter.end()
-    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -347,11 +157,11 @@ class BiblePanel(QWidget):
         back_btn = QPushButton("‹ Retour")
         back_btn.setCursor(Qt.PointingHandCursor)
         back_btn.setToolTip("Revenir à la fenêtre de contrôle")
-        back_btn.setStyleSheet(_btn_secondary_style())
+        back_btn.setStyleSheet(theme.btn_secondary_style())
         back_btn.clicked.connect(self.close_requested.emit)
         row.addWidget(back_btn)
 
-        logo = _circular_logo(34)
+        logo = circular_logo(34)
         if logo is not None:
             logo_label = QLabel()
             logo_label.setPixmap(logo)
@@ -479,7 +289,7 @@ class BiblePanel(QWidget):
 
         self.project_btn = QPushButton("Projeter le verset")
         self.project_btn.setCursor(Qt.PointingHandCursor)
-        self.project_btn.setStyleSheet(_btn_primary_style())
+        self.project_btn.setStyleSheet(theme.btn_primary_style())
         self.project_btn.clicked.connect(self._on_project_clicked)
         footer_col.addWidget(self.project_btn)
         layout.addWidget(footer)
@@ -508,7 +318,7 @@ class BiblePanel(QWidget):
         books_scroll.setWidgetResizable(True)
         books_scroll.setFrameShape(QFrame.NoFrame)
         books_scroll.setStyleSheet("background:transparent; border:none;")
-        self.books_host = _FlowHost(spacing=6)
+        self.books_host = FlowHost(spacing=6)
         self.books_flow = self.books_host.flow
         books_scroll.setWidget(self.books_host)
         books_col.addWidget(books_scroll, 1)
@@ -550,7 +360,7 @@ class BiblePanel(QWidget):
         chap_scroll.setWidgetResizable(True)
         chap_scroll.setFrameShape(QFrame.NoFrame)
         chap_scroll.setStyleSheet("background:transparent; border:none;")
-        self.chapters_host = _FlowHost(spacing=6)
+        self.chapters_host = FlowHost(spacing=6)
         self.chapters_flow = self.chapters_host.flow
         chap_scroll.setWidget(self.chapters_host)
         chap_col.addWidget(chap_scroll, 1)
@@ -571,7 +381,7 @@ class BiblePanel(QWidget):
         verse_scroll.setWidgetResizable(True)
         verse_scroll.setFrameShape(QFrame.NoFrame)
         verse_scroll.setStyleSheet("background:transparent; border:none;")
-        self.verses_host = _FlowHost(spacing=6)
+        self.verses_host = FlowHost(spacing=6)
         self.verses_flow = self.verses_host.flow
         verse_scroll.setWidget(self.verses_host)
         verse_col.addWidget(verse_scroll, 1)
@@ -648,9 +458,9 @@ class BiblePanel(QWidget):
         self._load_chapter()
 
     def _rebuild_chapters(self):
-        _clear_layout(self.chapters_flow)
+        clear_layout(self.chapters_flow)
         for n in range(1, self._book["chapters"] + 1):
-            btn = _NumButton(n)
+            btn = NumButton(n)
             btn.set_active(n == self._chapter)
             btn.picked.connect(self._select_chapter)
             self.chapters_flow.addWidget(btn)
@@ -660,7 +470,7 @@ class BiblePanel(QWidget):
         self._verse = None
         for i in range(self.chapters_flow.count()):
             btn = self.chapters_flow.itemAt(i).widget()
-            if isinstance(btn, _NumButton):
+            if isinstance(btn, NumButton):
                 btn.set_active(btn.number == chapter)
         self._load_chapter()
 
@@ -671,20 +481,20 @@ class BiblePanel(QWidget):
         self.reference_label.setText(f"{self._book['name']} {self._chapter}")
 
         # Colonne de lecture.
-        _clear_layout(self.reading_layout)
+        clear_layout(self.reading_layout)
         self._verse_rows = {}
         for verse, text in verses:
-            row = _VerseRow(verse, text)
+            row = NumberedTextRow(verse, text)
             row.clicked.connect(self._select_verse)
             self._verse_rows[verse] = row
             self.reading_layout.addWidget(row)
         self.reading_layout.addStretch()
 
         # Grille des versets.
-        _clear_layout(self.verses_flow)
+        clear_layout(self.verses_flow)
         self._verse_buttons = {}
         for verse, _text in verses:
-            btn = _NumButton(verse)
+            btn = NumButton(verse)
             btn.picked.connect(self._select_verse)
             self._verse_buttons[verse] = btn
             self.verses_flow.addWidget(btn)
@@ -856,18 +666,3 @@ class BiblePanel(QWidget):
         if self._verse is None:
             self._select_verse(1)
         self.project_requested.emit()
-
-
-def _clear_layout(layout):
-    """Retire et détruit tous les widgets d'un layout (versets, boutons…).
-
-    Le reparentage immédiat (setParent(None)) fait disparaître le widget aussitôt,
-    sans attendre le traitement différé de deleteLater — évite tout chevauchement
-    visuel transitoire lors d'un changement de chapitre.
-    """
-    while layout.count():
-        item = layout.takeAt(0)
-        widget = item.widget()
-        if widget is not None:
-            widget.setParent(None)
-            widget.deleteLater()

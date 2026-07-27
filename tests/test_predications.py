@@ -25,7 +25,7 @@ SAMPLE = {
 
 @pytest.fixture(autouse=True)
 def tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(database, "DB_PATH", tmp_path / "songs.db")
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "bda.db")
     database.init_db()
 
 
@@ -47,6 +47,37 @@ def test_lettres_et_prefixes():
     prefixes = dict(predications.prefixes_with_counts("A"))
     assert prefixes["Ab"] == 3
     assert dict(predications.prefixes_with_counts("E")) == {"El": 1}
+
+
+def test_reimport_si_asset_change(tmp_path, monkeypatch):
+    """`ensure_imported` réimporte quand l'asset embarqué change (empreinte
+    stockée dans `meta`), et ne réimporte pas sinon."""
+    import gzip
+    import json
+
+    asset = tmp_path / "predications.json.gz"
+    monkeypatch.setattr(predications, "PREDICATIONS_ASSET", asset)
+
+    def write_asset(data):
+        with gzip.open(asset, "wt", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+
+    write_asset(SAMPLE)
+    predications.ensure_imported()
+    assert predications.total_count() == 4
+
+    # Même asset : pas de réimport (les ids restent stables).
+    first_ids = [r["id"] for r in predications.list_by_prefix("Ab")]
+    predications.ensure_imported()
+    assert [r["id"] for r in predications.list_by_prefix("Ab")] == first_ids
+
+    # Asset modifié (ex. paragraphes nettoyés) : réimport automatique.
+    updated = {"predications": [dict(SAMPLE["predications"][0], paragraphs=["Propre."])]}
+    write_asset(updated)
+    predications.ensure_imported()
+    assert predications.total_count() == 1
+    pid = predications.list_by_prefix("Ab")[0]["id"]
+    assert [p["text"] for p in predications.get_paragraphs(pid)] == ["Propre."]
 
 
 def test_liste_paragraphes_recherche():
@@ -99,6 +130,30 @@ def test_parse_paragraphs_par_numerotation():
     assert paras[0] == "Premier paragraphe."
     assert paras[1].startswith("Deuxième")
     assert paras[2] == "Troisième."
+
+
+def test_parse_paragraphs_ignore_habillage_page():
+    """L'en-tête (durée « 1 heure … », liens) et le pied de page ne doivent
+    jamais se retrouver dans les paragraphes : seul le conteneur scalText
+    (balisage réel de branham.fr) contient le texte du sermon."""
+    scraper = _load_scraper()
+    html = (
+        '<div class="content">'
+        'La durée est de: 1 heure 37 minutes | La traduction: MS '
+        '<a href="#">Télécharger le PDF</a> '
+        '<a href="#">Voir le texte anglais seulement</a>'
+        '<div class="scalText text-justify col-12 mt-2 p-0">'
+        '<p>1 &nbsp;&nbsp; &nbsp;Merci, frère Neville. Bonjour les amis.<br>\n'
+        '<br>\n'
+        '2 &nbsp;&nbsp; &nbsp;J’ai dû prendre le train de onze heures.<br>\n'
+        '</p></div>'
+        '<a href="/">Accueil</a> <a href="/bio">Biographie</a></div>'
+    )
+    paras = scraper.parse_paragraphs(html)
+    assert paras == [
+        "Merci, frère Neville. Bonjour les amis.",
+        "J’ai dû prendre le train de onze heures.",
+    ]
 
 
 # ------------------------------ Panneau UI ---------------------------- #

@@ -1,12 +1,12 @@
 """
-Thème visuel de l'application, basé sur le logo "Logos Tabernacle"
-(cercle noir, fond doré/bronze avec bokeh, barre dorée centrale).
+Thème visuel de l'application BDA, basé sur le logo de l'église Logos
+Tabernacle (cercle noir, fond doré/bronze avec bokeh, barre dorée centrale).
 
 Toutes les couleurs de l'interface doivent passer par ce module afin de
 garder une identité visuelle cohérente et facile à ajuster.
 """
 
-APP_NAME = "Logos Tabernacle"
+APP_NAME = "BDA"
 
 # ---------- Palette extraite du logo ----------
 GOLD_LIGHTEST = "#FDE1AC"   # reflet clair sur la barre dorée
@@ -89,7 +89,7 @@ def build_stylesheet() -> str:
         color: {COLOR_PRIMARY};
     }}
 
-    /* ---------- Onglets (Chants / Bible) ---------- */
+    /* ---------- Onglets (aucun pour l'instant ; prêts pour un mode futur) ---------- */
     QTabWidget::pane {{
         border: 1px solid {COLOR_BORDER};
         border-radius: 4px;
@@ -289,7 +289,7 @@ def build_stylesheet() -> str:
         min-height: 20px;
     }}
 
-    /* ---------- Barre de menus (Fichier / Chants / Culte…) ---------- */
+    /* ---------- Barre de menus (Fichier / Affichage / Aide) ---------- */
     QMenuBar {{
         background-color: {COLOR_SURFACE};
         color: {COLOR_TEXT_MUTED};
@@ -351,3 +351,42 @@ def build_stylesheet() -> str:
         padding: 4px;
     }}
     """
+
+
+# --------------------------------------------------------------------------- #
+#  Styles inline des boutons
+#
+#  Appliqués via setStyleSheet directement sur le bouton : le cascade QSS d'un
+#  parent stylé neutralise sinon l'accent doré des QPushButton primaires.
+#  Un seul jeu de styles pour toute l'application (panneaux et postes de
+#  contrôle) — toute variante passe par ici, jamais par un style local.
+# --------------------------------------------------------------------------- #
+def btn_primary_style() -> str:
+    """Bouton d'action principale (accent doré)."""
+    return (
+        f"QPushButton {{ background:{COLOR_PRIMARY}; color:{COLOR_TEXT_ON_PRIMARY};"
+        f" border:none; border-radius:6px; padding:11px; font-size:13px; font-weight:700; }}"
+        f"QPushButton:hover {{ background:{COLOR_PRIMARY_HOVER}; }}"
+        f"QPushButton:disabled {{ background:{COLOR_SURFACE_ALT}; color:{BRONZE}; }}"
+    )
+
+
+def btn_secondary_style() -> str:
+    """Bouton d'action secondaire (contour, fond transparent)."""
+    return (
+        f"QPushButton {{ background:transparent; color:{COLOR_TEXT};"
+        f" border:1px solid {COLOR_BORDER}; border-radius:6px; padding:11px 14px;"
+        f" font-size:13px; font-weight:600; }}"
+        f"QPushButton:hover {{ background:{COLOR_SURFACE_ALT}; border-color:{COLOR_PRIMARY}; }}"
+        f"QPushButton:disabled {{ color:{BRONZE}; border-color:{COLOR_BORDER_SUBTLE}; }}"
+    )
+
+
+def btn_danger_style() -> str:
+    """Bouton d'action destructrice ou d'état d'alerte (écran noir actif…)."""
+    return (
+        f"QPushButton {{ background:{COLOR_DANGER}; color:white;"
+        f" border:1px solid {COLOR_DANGER}; border-radius:6px; padding:11px 14px;"
+        f" font-size:13px; font-weight:700; }}"
+        f"QPushButton:hover {{ background:{COLOR_DANGER_HOVER}; border-color:{COLOR_DANGER_HOVER}; }}"
+    )

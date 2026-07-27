@@ -1,6 +1,7 @@
 """
 Poste de contrôle de projection réutilisable, embarqué par chaque mode
-(Chants/Culte, Bible, et tout mode futur), plus la barre de réglages globale.
+(Bible, Prédications, et tout mode futur — ex. Chants), plus la barre de
+réglages globale.
 
 `ProjectionControls` pilote la projection via le `ProjectionController` partagé :
 aperçu en direct, navigation entre diapositives, « Projeter », « Écran noir »,
@@ -23,34 +24,6 @@ from PySide6.QtWidgets import (
 )
 
 from logos.ui import theme
-
-
-# Styles inline (le cascade QSS d'un parent stylé neutralise sinon l'accent doré
-# des QPushButton primaires et l'état coché de l'écran noir).
-def _primary_style() -> str:
-    return (
-        f"QPushButton {{ background:{theme.COLOR_PRIMARY}; color:{theme.COLOR_TEXT_ON_PRIMARY};"
-        f" border:none; border-radius:4px; padding:9px 14px; font-weight:700; }}"
-        f"QPushButton:hover {{ background:{theme.COLOR_PRIMARY_HOVER}; }}"
-        f"QPushButton:disabled {{ background:{theme.COLOR_SURFACE_ALT}; color:{theme.BRONZE}; }}"
-    )
-
-
-def _danger_style() -> str:
-    return (
-        f"QPushButton {{ background:{theme.COLOR_DANGER}; color:white; border:none;"
-        f" border-radius:4px; padding:9px 14px; font-weight:700; }}"
-        f"QPushButton:hover {{ background:{theme.COLOR_DANGER_HOVER}; }}"
-    )
-
-
-def _neutral_style() -> str:
-    return (
-        f"QPushButton {{ background:transparent; color:{theme.COLOR_TEXT};"
-        f" border:1px solid {theme.COLOR_BORDER}; border-radius:4px; padding:9px 14px;"
-        f" font-weight:600; }}"
-        f"QPushButton:hover {{ background:{theme.COLOR_SURFACE_ALT}; border-color:{theme.COLOR_PRIMARY}; }}"
-    )
 
 
 class ProjectionControls(QWidget):
@@ -109,7 +82,7 @@ class ProjectionControls(QWidget):
         # Le bouton « Projeter » est optionnel : le mode Bible projette via son
         # propre bouton « Projeter le verset » (on évite le doublon).
         self.project_btn = QPushButton("Projeter")
-        self.project_btn.setStyleSheet(_primary_style())
+        self.project_btn.setStyleSheet(theme.btn_primary_style())
         self.project_btn.clicked.connect(self.project)
         self.project_btn.setVisible(self._show_project_button)
         col.addWidget(self.project_btn)
@@ -117,7 +90,7 @@ class ProjectionControls(QWidget):
         row = QHBoxLayout()
         self.blackout_btn = QPushButton("Écran noir")
         self.blackout_btn.setCheckable(True)
-        self.blackout_btn.setStyleSheet(_neutral_style())
+        self.blackout_btn.setStyleSheet(theme.btn_secondary_style())
         self.blackout_btn.clicked.connect(self._on_blackout_clicked)
         self.stop_btn = QPushButton("Arrêter")
         self.stop_btn.setProperty("buttonStyle", "secondary")
@@ -205,7 +178,7 @@ class ProjectionControls(QWidget):
         self.blackout_btn.setChecked(blackout)
         self.blackout_btn.blockSignals(False)
         self.blackout_btn.setText("Réafficher" if blackout else "Écran noir")
-        self.blackout_btn.setStyleSheet(_danger_style() if blackout else _neutral_style())
+        self.blackout_btn.setStyleSheet(theme.btn_danger_style() if blackout else theme.btn_secondary_style())
 
         total = len(self._slides)
         self.counter.setText(f"{self._index + 1} / {total}" if total else "—")

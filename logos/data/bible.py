@@ -4,10 +4,11 @@ Le texte est livré compressé dans logos/assets/ et importé dans SQLite
 au premier lancement — l'application reste 100 % hors ligne.
 """
 import gzip
+import hashlib
 import json
 from pathlib import Path
 
-from logos.data.database import get_connection
+from logos.data.database import get_connection, get_meta, set_meta
 
 BIBLE_ASSET = Path(__file__).parent.parent / "assets" / "bible_ls1910.json.gz"
 TRANSLATION = "Louis Segond (1910)"
@@ -37,7 +38,7 @@ BOOK_ABBREVIATIONS = {
 
 
 def book_abbreviation(book_id: int) -> str:
-    """Abréviation courte d'un livre (repli sur les 2 premières lettres du nom)."""
+    """Abréviation courte d'un livre (chaîne vide si l'id est inconnu)."""
     return BOOK_ABBREVIATIONS.get(book_id, "")
 
 
@@ -54,12 +55,25 @@ def is_available() -> bool:
     return count > 0
 
 
+_ASSET_META_KEY = "bible_asset_sha256"
+
+
+def _asset_fingerprint() -> str:
+    return hashlib.sha256(BIBLE_ASSET.read_bytes()).hexdigest()
+
+
 def ensure_imported():
-    """Importe la Bible embarquée au premier lancement (quelques secondes)."""
-    if is_available() or not BIBLE_ASSET.exists():
+    """Importe la Bible embarquée si absente de la base **ou** si l'asset a
+    changé depuis le dernier import (empreinte stockée dans `meta`) — même
+    mécanique que les prédications. L'import initial prend quelques secondes."""
+    if not BIBLE_ASSET.exists():
+        return
+    fingerprint = _asset_fingerprint()
+    if is_available() and get_meta(_ASSET_META_KEY) == fingerprint:
         return
     with gzip.open(BIBLE_ASSET, "rt", encoding="utf-8") as f:
         import_data(json.load(f))
+    set_meta(_ASSET_META_KEY, fingerprint)
 
 
 def import_data(data: dict):

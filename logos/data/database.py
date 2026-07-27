@@ -1,12 +1,16 @@
 """
-Connexion SQLite et création des tables. La base ne contient plus que la Bible
-embarquée (les tables sont créées avec IF NOT EXISTS pour rester compatibles
-avec les bases existantes des utilisateurs).
+Connexion SQLite et création des tables : Bible embarquée, prédications et
+métadonnées d'import (les tables sont créées avec IF NOT EXISTS pour rester
+compatibles avec les bases existantes des utilisateurs).
+
+La base est reconstruite automatiquement au premier lancement (Bible et
+prédications réimportées depuis `logos/assets/`) : changer d'emplacement ne
+perd aucune donnée utilisateur.
 """
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path.home() / ".holyrics_clone" / "songs.db"
+DB_PATH = Path.home() / ".bda" / "bda.db"
 
 
 def get_connection():
@@ -63,5 +67,31 @@ def init_db():
         )
         """
     )
+    # Métadonnées clé/valeur (ex. empreintes des assets importés, pour
+    # réimporter automatiquement quand un asset embarqué change).
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_meta(key: str):
+    """Valeur de la table `meta` pour `key`, ou None si absente."""
+    conn = get_connection()
+    row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    conn.close()
+    return row["value"] if row is not None else None
+
+
+def set_meta(key: str, value: str):
+    """Enregistre (ou remplace) la valeur de `key` dans la table `meta`."""
+    conn = get_connection()
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
     conn.commit()
     conn.close()

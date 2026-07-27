@@ -10,11 +10,12 @@ français à l'import : le titre est « désaccentué » pour un regroupement A-
 simple (« Élie » -> lettre E, préfixe « El »).
 """
 import gzip
+import hashlib
 import json
 import unicodedata
 from pathlib import Path
 
-from logos.data.database import get_connection
+from logos.data.database import get_connection, get_meta, set_meta
 
 PREDICATIONS_ASSET = Path(__file__).parent.parent / "assets" / "predications.json.gz"
 SOURCE = "branham.fr"
@@ -52,12 +53,25 @@ def is_available() -> bool:
     return count > 0
 
 
+_ASSET_META_KEY = "predications_asset_sha256"
+
+
+def _asset_fingerprint() -> str:
+    return hashlib.sha256(PREDICATIONS_ASSET.read_bytes()).hexdigest()
+
+
 def ensure_imported():
-    """Importe les prédications embarquées au premier lancement, si présentes."""
-    if is_available() or not PREDICATIONS_ASSET.exists():
+    """Importe les prédications embarquées si absentes de la base **ou** si
+    l'asset a changé depuis le dernier import (empreinte stockée dans `meta`),
+    afin qu'une mise à jour du corpus embarqué soit reprise automatiquement."""
+    if not PREDICATIONS_ASSET.exists():
+        return
+    fingerprint = _asset_fingerprint()
+    if is_available() and get_meta(_ASSET_META_KEY) == fingerprint:
         return
     with gzip.open(PREDICATIONS_ASSET, "rt", encoding="utf-8") as f:
         import_data(json.load(f))
+    set_meta(_ASSET_META_KEY, fingerprint)
 
 
 def import_data(data: dict):

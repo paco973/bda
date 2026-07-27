@@ -1,14 +1,18 @@
 """
-Navigateur de prédications (mode « Prédications »).
+Navigateur de prédications (mode « Prédications »), même disposition que le
+navigateur biblique (`BiblePanel`) pour une prise en main identique :
 
-Reproduit la maquette : barre supérieure (logo, recherche, nombre d'entrées),
-grille ALPHABET, préfixes 2-lettres, liste des prédications, grille des
-paragraphes. Une prédication = des paragraphes numérotés ; chaque paragraphe est
-une diapositive projetable.
+  - barre supérieure : retour, logo, titre, recherche, nombre d'entrées ;
+  - colonne de lecture (gauche) : code date, titre, paragraphes cliquables,
+    navigation § préc./suiv. et « Projeter le paragraphe » ;
+  - navigation (droite) : grille ALPHABET (haut), puis préfixes + liste des
+    prédications et grille des paragraphes (bas) ;
+  - barre de statut (date · titre à gauche, paragraphe sélectionné à droite).
 
 Comme `BiblePanel`, ce panneau ne projette pas lui-même : il émet des signaux et
-expose `current_deck()`. Les petits widgets génériques (FlowLayout, logo rond,
-cases numérotées, styles de boutons) sont réutilisés depuis `bible_panel`.
+expose `current_deck()`. Les petits widgets génériques (disposition en flux,
+logo rond, cases numérotées, lignes de lecture) viennent de `widgets`, les
+styles de boutons de `theme`.
 """
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -24,14 +28,12 @@ from PySide6.QtWidgets import (
 
 from logos.data import predications
 from logos.ui import theme
-from logos.ui.bible_panel import (
-    FlowLayout,
-    _FlowHost,
-    _NumButton,
-    _circular_logo,
-    _btn_primary_style,
-    _btn_secondary_style,
-    _clear_layout,
+from logos.ui.widgets import (
+    FlowHost,
+    NumButton,
+    NumberedTextRow,
+    circular_logo,
+    clear_layout,
 )
 
 
@@ -126,6 +128,7 @@ class _PredicationRow(QFrame):
     def __init__(self, row):
         super().__init__()
         self.pred_id = row["id"]
+        self.date_code = row["date_code"]
         self.setCursor(Qt.PointingHandCursor)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 10, 16, 10)
@@ -189,7 +192,7 @@ class PredicationPanel(QWidget):
 
         self._letter = None
         self._prefix = None
-        self._predication = None       # row sélectionnée
+        self._predication = None       # {id, date_code, title_fr} sélectionné
         self._paragraph = None         # numéro de paragraphe sélectionné
         self._paragraphs = []          # (number, text) de la prédication courante
         self._letter_cards = {}        # lettre -> _LetterCard
@@ -210,11 +213,13 @@ class PredicationPanel(QWidget):
         root.addWidget(self._build_topbar())
 
         body = QHBoxLayout()
-        body.setContentsMargins(16, 16, 16, 16)
-        body.setSpacing(16)
-        body.addWidget(self._build_left_column(), 1)
-        body.addWidget(self._build_right_column())
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(self._build_reading_column())
+        body.addWidget(self._build_navigation_column(), 1)
         root.addLayout(body, 1)
+
+        root.addWidget(self._build_statusbar())
 
     def _build_topbar(self):
         bar = QFrame()
@@ -228,11 +233,12 @@ class PredicationPanel(QWidget):
 
         back_btn = QPushButton("‹ Retour")
         back_btn.setCursor(Qt.PointingHandCursor)
-        back_btn.setStyleSheet(_btn_secondary_style())
+        back_btn.setToolTip("Revenir à la fenêtre de contrôle")
+        back_btn.setStyleSheet(theme.btn_secondary_style())
         back_btn.clicked.connect(self.close_requested.emit)
         row.addWidget(back_btn)
 
-        logo = _circular_logo(34)
+        logo = circular_logo(34)
         if logo is not None:
             logo_label = QLabel()
             logo_label.setPixmap(logo)
@@ -244,11 +250,6 @@ class PredicationPanel(QWidget):
             f"color:{theme.COLOR_TEXT}; font-size:15px; font-weight:700; background:transparent;"
         )
         row.addWidget(title)
-        section = QLabel("Prédications")
-        section.setStyleSheet(
-            f"color:{theme.BRONZE}; font-size:13px; font-weight:600; background:transparent;"
-        )
-        row.addWidget(section)
 
         search_box = QFrame()
         search_box.setStyleSheet(
@@ -263,7 +264,7 @@ class PredicationPanel(QWidget):
         search_row.addWidget(glass)
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Rechercher une prédication…")
-        self.search_edit.setMinimumWidth(240)
+        self.search_edit.setFixedWidth(220)
         self.search_edit.setStyleSheet(
             f"background:transparent; border:none; color:{theme.COLOR_TEXT}; font-size:13px;"
         )
@@ -272,6 +273,7 @@ class PredicationPanel(QWidget):
         row.addWidget(search_box)
 
         row.addStretch()
+
         self.entries_label = QLabel("")
         self.entries_label.setStyleSheet(
             f"color:{theme.BRONZE}; font-size:12px; font-weight:600; background:transparent;"
@@ -279,106 +281,55 @@ class PredicationPanel(QWidget):
         row.addWidget(self.entries_label)
         return bar
 
-    def _panel_frame(self):
-        frame = QFrame()
-        frame.setStyleSheet(
-            f"QFrame {{ background:{theme.COLOR_SURFACE}; border:1px solid {theme.COLOR_BORDER_SUBTLE};"
-            f" border-radius:12px; }}"
+    def _build_reading_column(self):
+        col = QFrame()
+        col.setFixedWidth(360)
+        col.setStyleSheet(
+            f"background:{theme.COLOR_SURFACE};"
+            f" border-right:1px solid {theme.COLOR_SURFACE_ALT};"
         )
-        return frame
-
-    def _build_left_column(self):
-        col = QWidget()
-        col.setStyleSheet("background:transparent;")
         layout = QVBoxLayout(col)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
+        layout.setSpacing(0)
 
-        # --- ALPHABET ---
-        alpha = self._panel_frame()
-        alpha_col = QVBoxLayout(alpha)
-        alpha_col.setContentsMargins(18, 16, 18, 16)
-        alpha_col.setSpacing(12)
-        alpha_col.addWidget(_section_title("ALPHABET"))
-        self.alphabet_host = _FlowHost(spacing=8)
-        self.alphabet_flow = self.alphabet_host.flow
-        alpha_col.addWidget(self.alphabet_host)
-        layout.addWidget(alpha)
-
-        # --- Liste des prédications ---
-        listing = self._panel_frame()
-        list_col = QVBoxLayout(listing)
-        list_col.setContentsMargins(18, 16, 18, 16)
-        list_col.setSpacing(10)
-        head = QHBoxLayout()
-        self.list_title = QLabel("")
-        self.list_title.setStyleSheet(
-            f"color:{theme.COLOR_TEXT}; font-size:15px; font-weight:700; background:transparent;"
+        header = QFrame()
+        header.setStyleSheet(f"border-bottom:1px solid {theme.COLOR_SURFACE_ALT};")
+        header_col = QVBoxLayout(header)
+        header_col.setContentsMargins(20, 16, 20, 12)
+        header_col.setSpacing(3)
+        self.kicker_label = QLabel("")
+        self.kicker_label.setStyleSheet(
+            f"color:{theme.BRONZE}; font-size:11px; font-weight:700;"
+            f" letter-spacing:2px; background:transparent;"
         )
-        self.list_count = QLabel("")
-        self.list_count.setStyleSheet(
-            f"color:{theme.BRONZE}; font-size:12px; font-weight:600; background:transparent;"
+        self.title_label = QLabel("")
+        self.title_label.setWordWrap(True)
+        self.title_label.setStyleSheet(
+            f"color:{theme.COLOR_TEXT}; font-size:22px; font-weight:700; background:transparent;"
         )
-        head.addWidget(self.list_title)
-        head.addStretch()
-        head.addWidget(self.list_count)
-        list_col.addLayout(head)
+        header_col.addWidget(self.kicker_label)
+        header_col.addWidget(self.title_label)
+        layout.addWidget(header)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet("background:transparent; border:none;")
-        self.list_host = QWidget()
-        self.list_host.setStyleSheet("background:transparent;")
-        self.list_layout = QVBoxLayout(self.list_host)
-        self.list_layout.setContentsMargins(0, 0, 0, 0)
-        self.list_layout.setSpacing(4)
-        self.list_layout.addStretch()
-        scroll.setWidget(self.list_host)
-        list_col.addWidget(scroll, 1)
-        layout.addWidget(listing, 1)
-        return col
+        # Zone de lecture défilante (les paragraphes de la prédication).
+        self.reading_area = QScrollArea()
+        self.reading_area.setWidgetResizable(True)
+        self.reading_area.setFrameShape(QFrame.NoFrame)
+        self.reading_area.setStyleSheet("background:transparent; border:none;")
+        self.reading_host = QWidget()
+        self.reading_host.setStyleSheet("background:transparent;")
+        self.reading_layout = QVBoxLayout(self.reading_host)
+        self.reading_layout.setContentsMargins(20, 16, 20, 24)
+        self.reading_layout.setSpacing(4)
+        self.reading_layout.addStretch()
+        self.reading_area.setWidget(self.reading_host)
+        layout.addWidget(self.reading_area, 1)
 
-    def _build_right_column(self):
-        col = QWidget()
-        col.setFixedWidth(300)
-        col.setStyleSheet("background:transparent;")
-        layout = QVBoxLayout(col)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-
-        # --- PRÉFIXE ---
-        pref = self._panel_frame()
-        pref_col = QVBoxLayout(pref)
-        pref_col.setContentsMargins(16, 14, 16, 14)
-        pref_col.setSpacing(10)
-        self.prefix_title = _section_title("PRÉFIXE")
-        pref_col.addWidget(self.prefix_title)
-        self.prefix_host = _FlowHost(spacing=6)
-        self.prefix_flow = self.prefix_host.flow
-        pref_col.addWidget(self.prefix_host)
-        layout.addWidget(pref)
-
-        # --- PARAGRAPHES ---
-        para = self._panel_frame()
-        para_col = QVBoxLayout(para)
-        para_col.setContentsMargins(16, 14, 16, 14)
-        para_col.setSpacing(10)
-        para_col.addWidget(_section_title("PARAGRAPHES"))
-        self.para_subtitle = QLabel("")
-        self.para_subtitle.setStyleSheet(
-            f"color:{theme.COLOR_TEXT}; font-size:13px; font-weight:700; background:transparent;"
-        )
-        para_col.addWidget(self.para_subtitle)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet("background:transparent; border:none;")
-        self.para_host = _FlowHost(spacing=6)
-        self.para_flow = self.para_host.flow
-        scroll.setWidget(self.para_host)
-        para_col.addWidget(scroll, 1)
+        footer = QFrame()
+        footer.setStyleSheet(f"border-top:1px solid {theme.COLOR_SURFACE_ALT};")
+        footer_col = QVBoxLayout(footer)
+        footer_col.setContentsMargins(20, 12, 20, 12)
+        footer_col.setSpacing(8)
 
         nav = QHBoxLayout()
         self.prev_btn = QPushButton("‹ § préc.")
@@ -389,16 +340,139 @@ class PredicationPanel(QWidget):
         self.next_btn.clicked.connect(lambda: self._step_paragraph(1))
         nav.addWidget(self.prev_btn)
         nav.addWidget(self.next_btn)
-        para_col.addLayout(nav)
+        footer_col.addLayout(nav)
 
         self.project_btn = QPushButton("Projeter le paragraphe")
         self.project_btn.setCursor(Qt.PointingHandCursor)
-        self.project_btn.setStyleSheet(_btn_primary_style())
+        self.project_btn.setStyleSheet(theme.btn_primary_style())
         self.project_btn.clicked.connect(self._on_project_clicked)
-        para_col.addWidget(self.project_btn)
-
-        layout.addWidget(para, 1)
+        footer_col.addWidget(self.project_btn)
+        layout.addWidget(footer)
         return col
+
+    def _build_navigation_column(self):
+        col = QWidget()
+        col.setStyleSheet(f"background:{theme.COLOR_BACKGROUND};")
+        layout = QVBoxLayout(col)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # --- Alphabet (haut) ---
+        alpha_wrap = QWidget()
+        alpha_col = QVBoxLayout(alpha_wrap)
+        alpha_col.setContentsMargins(22, 18, 22, 14)
+        alpha_col.setSpacing(10)
+        alpha_col.addWidget(_section_title("Alphabet"))
+
+        alpha_scroll = QScrollArea()
+        alpha_scroll.setWidgetResizable(True)
+        alpha_scroll.setFrameShape(QFrame.NoFrame)
+        alpha_scroll.setStyleSheet("background:transparent; border:none;")
+        self.alphabet_host = FlowHost(spacing=8)
+        self.alphabet_flow = self.alphabet_host.flow
+        alpha_scroll.setWidget(self.alphabet_host)
+        alpha_col.addWidget(alpha_scroll, 1)
+        layout.addWidget(alpha_wrap, 1)
+
+        # --- Prédications + paragraphes (bas) ---
+        bottom = QFrame()
+        bottom.setStyleSheet(
+            f"background:{theme.COLOR_SURFACE_SUNKEN};"
+            f" border-top:1px solid {theme.COLOR_SURFACE_ALT};"
+        )
+        bottom.setMaximumHeight(300)
+        bottom_row = QHBoxLayout(bottom)
+        bottom_row.setContentsMargins(0, 0, 0, 0)
+        bottom_row.setSpacing(0)
+
+        # Prédications (préfixes puis liste)
+        pred_wrap = QFrame()
+        pred_wrap.setStyleSheet(f"border-right:1px solid {theme.COLOR_SURFACE_ALT};")
+        pred_col = QVBoxLayout(pred_wrap)
+        pred_col.setContentsMargins(18, 14, 18, 14)
+        pred_col.setSpacing(10)
+        pred_head = QHBoxLayout()
+        pred_head.setSpacing(8)
+        pred_title = QLabel("Prédication")
+        pred_title.setStyleSheet(
+            f"color:{theme.BRONZE}; font-size:11px; font-weight:700;"
+            f" letter-spacing:2px; background:transparent;"
+        )
+        self.list_title = QLabel("")
+        self.list_title.setStyleSheet(
+            f"color:{theme.COLOR_TEXT}; font-size:13px; font-weight:700; background:transparent;"
+        )
+        self.list_count = QLabel("")
+        self.list_count.setStyleSheet(
+            f"color:{theme.BRONZE}; font-size:12px; font-weight:600; background:transparent;"
+        )
+        pred_head.addWidget(pred_title)
+        pred_head.addWidget(self.list_title)
+        pred_head.addStretch()
+        pred_head.addWidget(self.list_count)
+        pred_col.addLayout(pred_head)
+
+        self.prefix_host = FlowHost(spacing=6)
+        self.prefix_flow = self.prefix_host.flow
+        pred_col.addWidget(self.prefix_host)
+
+        list_scroll = QScrollArea()
+        list_scroll.setWidgetResizable(True)
+        list_scroll.setFrameShape(QFrame.NoFrame)
+        list_scroll.setStyleSheet("background:transparent; border:none;")
+        self.list_host = QWidget()
+        self.list_host.setStyleSheet("background:transparent;")
+        self.list_layout = QVBoxLayout(self.list_host)
+        self.list_layout.setContentsMargins(0, 0, 0, 0)
+        self.list_layout.setSpacing(4)
+        self.list_layout.addStretch()
+        list_scroll.setWidget(self.list_host)
+        pred_col.addWidget(list_scroll, 1)
+        bottom_row.addWidget(pred_wrap, 3)
+
+        # Paragraphes
+        para_wrap = QWidget()
+        para_col = QVBoxLayout(para_wrap)
+        para_col.setContentsMargins(18, 14, 18, 14)
+        para_col.setSpacing(10)
+        para_title = QLabel("Paragraphe")
+        para_title.setStyleSheet(
+            f"color:{theme.BRONZE}; font-size:11px; font-weight:700;"
+            f" letter-spacing:2px; background:transparent;"
+        )
+        para_col.addWidget(para_title)
+        para_scroll = QScrollArea()
+        para_scroll.setWidgetResizable(True)
+        para_scroll.setFrameShape(QFrame.NoFrame)
+        para_scroll.setStyleSheet("background:transparent; border:none;")
+        self.para_host = FlowHost(spacing=6)
+        self.para_flow = self.para_host.flow
+        para_scroll.setWidget(self.para_host)
+        para_col.addWidget(para_scroll, 1)
+        bottom_row.addWidget(para_wrap, 2)
+
+        layout.addWidget(bottom)
+        return col
+
+    def _build_statusbar(self):
+        bar = QFrame()
+        bar.setStyleSheet(
+            f"background:{theme.COLOR_SURFACE}; border-top:1px solid {theme.COLOR_BORDER_SUBTLE};"
+        )
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(18, 8, 18, 8)
+        self.status_left = QLabel("")
+        self.status_left.setStyleSheet(
+            f"color:{theme.BRONZE}; font-size:12px; font-weight:600; background:transparent;"
+        )
+        self.status_right = QLabel("")
+        self.status_right.setStyleSheet(
+            f"color:{theme.BRONZE}; font-size:12px; font-weight:600; background:transparent;"
+        )
+        row.addWidget(self.status_left)
+        row.addStretch()
+        row.addWidget(self.status_right)
+        return bar
 
     # ------------------------------ Données ------------------------------- #
     def _load_alphabet(self):
@@ -425,20 +499,20 @@ class PredicationPanel(QWidget):
         )
         message.setWordWrap(True)
         message.setStyleSheet(
-            f"color:{theme.COLOR_TEXT_MUTED}; font-size:13px; background:transparent;"
+            f"color:{theme.COLOR_TEXT_MUTED}; font-size:14px; background:transparent;"
         )
-        self.list_layout.insertWidget(0, message)
+        self.reading_layout.insertWidget(0, message)
+        self._update_status_texts()
 
     # --------------------------- Sélection -------------------------------- #
     def _select_letter(self, letter):
         self._letter = letter
         for l, card in self._letter_cards.items():
             card.set_active(l == letter)
-        self.prefix_title.setText(f"PRÉFIXE {letter}")
         self._rebuild_prefixes()
 
     def _rebuild_prefixes(self):
-        _clear_layout(self.prefix_flow)
+        clear_layout(self.prefix_flow)
         self._prefix_chips = {}
         first = None
         for prefix, count in predications.prefixes_with_counts(self._letter):
@@ -461,7 +535,7 @@ class PredicationPanel(QWidget):
         self._populate_list(predications.list_by_prefix(prefix), header=prefix)
 
     def _populate_list(self, rows, header):
-        _clear_layout(self.list_layout)
+        clear_layout(self.list_layout)
         self.list_title.setText(f"{header}")
         self.list_count.setText(f"{len(rows)} prédication(s)")
         self._pred_rows = {}
@@ -477,35 +551,51 @@ class PredicationPanel(QWidget):
             self._predication = None
             self._paragraphs = []
             self._paragraph = None
-            self.para_subtitle.setText("")
-            _clear_layout(self.para_flow)
+            self.kicker_label.setText("")
+            self.title_label.setText("")
+            clear_layout(self.reading_layout)
+            clear_layout(self.para_flow)
+            self._update_status_texts()
             self.selection_changed.emit()
 
     def _select_predication(self, pred_id, row_data=None):
         for pid, widget in getattr(self, "_pred_rows", {}).items():
             widget.set_active(pid == pred_id)
-        # Titre pour le sous-titre des paragraphes (depuis la ligne ou la donnée).
+        # Titre et code date pour l'en-tête de lecture (ligne ou donnée).
         if row_data is not None:
-            title = row_data["title_fr"]
+            title, date_code = row_data["title_fr"], row_data["date_code"]
         else:
             widget = getattr(self, "_pred_rows", {}).get(pred_id)
             title = widget.title_label.text() if widget is not None else ""
-        self._predication = {"id": pred_id, "title_fr": title}
-        self.para_subtitle.setText(title)
+            date_code = widget.date_code if widget is not None else ""
+        self._predication = {"id": pred_id, "date_code": date_code, "title_fr": title}
+        self.kicker_label.setText(date_code.upper())
+        self.title_label.setText(title)
 
         self._paragraphs = predications.get_paragraphs(pred_id)
         self._paragraph = 1 if self._paragraphs else None
+        self._rebuild_reading()
         self._rebuild_paragraphs()
-        self.list_count.setText(
-            f"{predications.paragraph_count(pred_id)} paragraphes"
-        )
+        self._update_status_texts()
         self.selection_changed.emit()
 
+    def _rebuild_reading(self):
+        clear_layout(self.reading_layout)
+        self._para_rows = {}
+        for number, text in self._paragraphs:
+            row = NumberedTextRow(number, text)
+            row.clicked.connect(self._select_paragraph)
+            self._para_rows[number] = row
+            self.reading_layout.addWidget(row)
+        self.reading_layout.addStretch()
+        for number, row in self._para_rows.items():
+            row.set_active(number == self._paragraph)
+
     def _rebuild_paragraphs(self):
-        _clear_layout(self.para_flow)
+        clear_layout(self.para_flow)
         self._para_buttons = {}
         for number, _text in self._paragraphs:
-            btn = _NumButton(number)
+            btn = NumButton(number)
             btn.set_active(number == self._paragraph)
             btn.picked.connect(self._select_paragraph)
             self._para_buttons[number] = btn
@@ -513,8 +603,15 @@ class PredicationPanel(QWidget):
 
     def _select_paragraph(self, number):
         self._paragraph = number
+        for n, row in getattr(self, "_para_rows", {}).items():
+            row.set_active(n == number)
         for n, btn in getattr(self, "_para_buttons", {}).items():
             btn.set_active(n == number)
+        # Fait défiler la lecture jusqu'au paragraphe sélectionné.
+        row = getattr(self, "_para_rows", {}).get(number)
+        if row is not None:
+            self.reading_area.ensureWidgetVisible(row)
+        self._update_status_texts()
         self.selection_changed.emit()
 
     def _step_paragraph(self, delta):
@@ -538,6 +635,19 @@ class PredicationPanel(QWidget):
                 )
             return
         self._populate_list(predications.search(query), header=f"« {query} »")
+
+    # ----------------------------- Statut --------------------------------- #
+    def _update_status_texts(self):
+        if self._predication is not None:
+            self.status_left.setText(
+                f"{self._predication['date_code']} · {self._predication['title_fr']}"
+            )
+        else:
+            self.status_left.setText("Prédications")
+        if self._paragraph is not None:
+            self.status_right.setText(f"Paragraphe {self._paragraph} sélectionné")
+        else:
+            self.status_right.setText("Sélectionnez un paragraphe")
 
     # ----------------------- Diapositives / signaux ----------------------- #
     def current_deck(self):

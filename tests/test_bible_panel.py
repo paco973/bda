@@ -16,7 +16,7 @@ def qapp():
 
 @pytest.fixture(autouse=True)
 def tmp_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(database, "DB_PATH", tmp_path / "songs.db")
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "bda.db")
     database.init_db()
 
 
