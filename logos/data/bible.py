@@ -6,11 +6,12 @@ au premier lancement — l'application reste 100 % hors ligne.
 import gzip
 import hashlib
 import json
-from pathlib import Path
-
+import re
 from logos.data.database import get_connection, get_meta, set_meta
+from logos.data.textutils import strip_accents
+from logos.resources import asset_path
 
-BIBLE_ASSET = Path(__file__).parent.parent / "assets" / "bible_ls1910.json.gz"
+BIBLE_ASSET = asset_path("bible_ls1910.json.gz")
 TRANSLATION = "Louis Segond (1910)"
 TRANSLATION_CODE = "LSG"
 
@@ -45,6 +46,51 @@ def book_abbreviation(book_id: int) -> str:
 def testament(book_id: int) -> str:
     """« Ancien Testament » (livres 1 à 39) ou « Nouveau Testament » (40 à 66)."""
     return "Ancien Testament" if book_id <= OLD_TESTAMENT_COUNT else "Nouveau Testament"
+
+
+# « Jean 3:16 », « jean 3 16 », « 1 co 13 »… : livre (éventuellement précédé
+# d'un ordinal), puis chapitre et verset optionnels.
+_REFERENCE = re.compile(
+    r"^\s*(?P<book>[0-9]?\s*[^\d:.,;]+?)\s*"
+    r"(?:(?P<chapter>\d+)\s*(?:[:.,;\s]\s*(?P<verse>\d+))?)?\s*$"
+)
+
+
+def _normalize(text: str) -> str:
+    """Clé de comparaison d'un nom de livre : sans accents, casse ni ponctuation."""
+    return "".join(c for c in strip_accents(text).lower() if c.isalnum())
+
+
+def parse_reference(query: str):
+    """Analyse une référence tapée : « Jean 3:16 » -> (43, 3, 16).
+
+    Le livre est reconnu par nom exact, abréviation canonique ou début de nom
+    (2 lettres minimum), accents/casse ignorés. Chapitre et verset sont
+    optionnels (None si absents) et ne sont pas bornés ici. Retourne None si la
+    requête ne ressemble pas à une référence ou si aucun livre ne correspond.
+    """
+    match = _REFERENCE.match(query or "")
+    if match is None:
+        return None
+    key = _normalize(match.group("book"))
+    if not any(c.isalpha() for c in key):
+        return None
+
+    book_id = next(
+        (bid for bid, abbr in BOOK_ABBREVIATIONS.items() if _normalize(abbr) == key),
+        None,
+    )
+    names = [(row["id"], _normalize(row["name"])) for row in get_books()]
+    if book_id is None:
+        book_id = next((bid for bid, name in names if name == key), None)
+    if book_id is None and len(key) >= 2:
+        book_id = next((bid for bid, name in names if name.startswith(key)), None)
+    if book_id is None:
+        return None
+
+    chapter = int(match.group("chapter")) if match.group("chapter") else None
+    verse = int(match.group("verse")) if match.group("verse") else None
+    return book_id, chapter, verse
 
 
 def is_available() -> bool:

@@ -72,6 +72,30 @@ def test_label_et_texte_projetable():
     assert parts[1].startswith("La terre était informe")
 
 
+def test_parse_reference():
+    bible.import_data(SAMPLE)
+    assert bible.parse_reference("Jean 3:16") == (43, 3, 16)
+    assert bible.parse_reference("jean 3 16") == (43, 3, 16)
+    assert bible.parse_reference("Jea 3") == (43, 3, None)      # abréviation
+    assert bible.parse_reference("gen 1:2") == (1, 1, 2)        # début de nom
+    assert bible.parse_reference("genèse") == (1, None, None)   # livre seul
+    assert bible.parse_reference("bonjour tout le monde") is None
+    assert bible.parse_reference("3:16") is None
+    assert bible.parse_reference("") is None
+
+
+def test_split_to_fit():
+    fits = lambda t: len(t) <= 20
+    assert slides.split_to_fit("court", fits) == ["court"]
+    assert slides.split_to_fit("texte sans prédicat", None) == ["texte sans prédicat"]
+    chunks = slides.split_to_fit("un deux trois quatre cinq six sept", fits)
+    assert len(chunks) > 1
+    assert all(len(c) <= 20 for c in chunks)
+    assert " ".join(chunks) == "un deux trois quatre cinq six sept"
+    # Un mot seul qui ne tient pas passe quand même (progression garantie).
+    assert slides.split_to_fit("incompressible", lambda t: len(t) <= 3) == ["incompressible"]
+
+
 def test_bible_embarquee_complete():
     """L'asset livré avec l'application contient bien les 66 livres."""
     assert bible.BIBLE_ASSET.exists()

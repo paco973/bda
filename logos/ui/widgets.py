@@ -4,15 +4,14 @@ Petits widgets et aides génériques partagés par les panneaux de l'UI
 
 Aucune logique métier ici : uniquement des composants réutilisables.
 """
-from pathlib import Path
-
 from PySide6.QtCore import Qt, Signal, QRect, QSize, QPoint
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath
 from PySide6.QtWidgets import QWidget, QLabel, QLayout, QPushButton
 
+from logos.resources import asset_path
 from logos.ui import theme
 
-_LOGO_PATH = Path(__file__).parent.parent / "assets" / "logo.png"
+_LOGO_PATH = asset_path("logo.png")
 
 
 # --------------------------------------------------------------------------- #

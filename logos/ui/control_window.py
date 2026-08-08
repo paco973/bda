@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
+from logos.data.database import get_meta, set_meta
 from logos.ui import theme
 from logos.ui.bible_panel import BiblePanel
 from logos.ui.predication_panel import PredicationPanel
@@ -85,10 +86,19 @@ class ControlWindow(QMainWindow):
 
         self._build_ui()
 
-        # Le nombre de versets qui tiennent dépend de la taille du texte et de
-        # l'écran cible : recharger le jeu Bible quand l'un des deux change.
+        # Réglages persistants (taille du texte, écran, versets par diapositive) :
+        # restaurés depuis la table `meta`, sauvegardés à chaque changement.
+        self._saved_settings = None
+        self._restore_settings()
+
+        # Le contenu qui tient dépend de la taille du texte et de l'écran
+        # cible : recharger les jeux de diapos quand l'un des deux change.
         self._last_fit_key = self._fit_key()
         self.controller.changed.connect(self._on_controller_changed)
+        self.controller.changed.connect(self._save_settings)
+        self.bible_panel.verses_spin.valueChanged.connect(
+            lambda _value: self._save_settings()
+        )
 
         # Branchement/débranchement d'un écran pendant l'exécution.
         app = QGuiApplication.instance()
@@ -102,7 +112,39 @@ class ControlWindow(QMainWindow):
         key = self._fit_key()
         if key != self._last_fit_key:
             self._last_fit_key = key
-            self._on_bible_selection()  # re-pagine selon la place disponible
+            # Re-pagine les deux modes selon la place disponible.
+            self._on_bible_selection()
+            self.predication_panel.invalidate_deck()
+            self._on_predication_selection()
+
+    # ---------- Réglages persistants ----------
+    def _restore_settings(self):
+        size = get_meta("ui_font_size")
+        if size and size.isdigit():
+            self.controller.set_font_size(int(size))
+        screen_name = get_meta("ui_screen_name")
+        if screen_name:
+            for screen in self.controller.screens():
+                if screen.name() == screen_name:
+                    self.controller.set_screen(screen)
+                    break
+        verses = get_meta("ui_verses_per_slide")
+        if verses and verses.isdigit():
+            self.bible_panel.verses_spin.setValue(int(verses))
+
+    def _save_settings(self):
+        screen = self.controller.screen()
+        state = (
+            str(self.controller.font_size()),
+            screen.name() if screen is not None else "",
+            str(self.bible_panel.verses_spin.value()),
+        )
+        if state == self._saved_settings:
+            return  # `changed` est émis souvent : n'écrire que si ça a bougé
+        self._saved_settings = state
+        set_meta("ui_font_size", state[0])
+        set_meta("ui_screen_name", state[1])
+        set_meta("ui_verses_per_slide", state[2])
 
     # ---------- Construction de l'interface ----------
     def _build_ui(self):
@@ -188,6 +230,8 @@ class ControlWindow(QMainWindow):
 
     def _build_predication_page(self):
         self.predication_panel = PredicationPanel()
+        # Découpe les paragraphes trop longs selon la place dans la projection.
+        self.predication_panel.set_fit_predicate(self.controller.text_fits)
         self.predication_panel.close_requested.connect(self._go_home)
         self.predication_panel.selection_changed.connect(self._on_predication_selection)
         self.predication_panel.project_requested.connect(self._on_predication_project)

@@ -50,11 +50,40 @@ python -m pytest tests/ -q
 L'architecture (couches `logos/data` et `logos/ui`, conventions) est documentée
 dans `claude.md`.
 
-## Créer un exécutable (Windows/macOS)
+## Créer un exécutable (macOS / Windows)
+
+La recette de construction est versionnée dans `packaging/bda.spec` : elle
+embarque les assets (`logos/assets/`), pose l'icône et désactive la console.
 
 ```bash
-pip install pyinstaller
-pyinstaller --noconfirm --windowed --name "Logos Tabernacle" main.py
+pip install -r requirements-build.txt
+pyinstaller --noconfirm --clean packaging/bda.spec
 ```
 
-L'application empaquetée se trouve ensuite dans `dist/`.
+Résultat dans `dist/` :
+
+- **macOS** : `dist/BDA.app`, double-cliquable, à glisser dans `/Applications`.
+- **Windows** : `dist/BDA/BDA.exe` — distribuer le **dossier `BDA` entier**
+  (l'`.exe` seul ne fonctionne pas), par exemple zippé.
+
+PyInstaller ne fait pas de compilation croisée : le `.app` macOS se construit
+**sur un Mac**, le `.exe` Windows **sur une machine Windows**, avec la même
+commande. Un `.app` construit sur un Mac Apple Silicon ne tourne que sur Apple
+Silicon (et inversement pour Intel).
+
+Points à connaître :
+
+- Les prédications ne sont embarquées que si `logos/assets/predications.json.gz`
+  existe au moment du build (asset non versionné, voir
+  `scripts/scrape_predications.py`). Sans lui, l'exécutable démarre et le mode
+  Prédications affiche « non disponible ».
+- Au premier lancement, l'exécutable reconstruit la base dans `~/.bda/bda.db`
+  (import de la Bible et des prédications) : ce démarrage-là prend quelques
+  secondes, les suivants sont immédiats.
+- **macOS** : le bundle n'est pas signé ni notarisé. Sur un autre Mac, le
+  premier lancement doit se faire par **clic droit → Ouvrir** (puis « Ouvrir »
+  dans l'alerte), sinon Gatekeeper le bloque.
+- **Windows** : SmartScreen peut afficher un avertissement pour un exécutable
+  non signé — « Informations complémentaires » puis « Exécuter quand même ».
+- Si le logo change, régénérer les icônes :
+  `python packaging/make_icons.py`.

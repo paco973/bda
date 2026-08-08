@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
 )
 
-from logos.data import predications
+from logos.data import predications, slides
 from logos.ui import theme
 from logos.ui.widgets import (
     FlowHost,
@@ -194,9 +194,12 @@ class PredicationPanel(QWidget):
         self._prefix = None
         self._predication = None       # {id, date_code, title_fr} sélectionné
         self._paragraph = None         # numéro de paragraphe sélectionné
+        self._part = 0                 # partie sélectionnée d'un paragraphe découpé
         self._paragraphs = []          # (number, text) de la prédication courante
         self._letter_cards = {}        # lettre -> _LetterCard
         self._prefix_chips = {}        # préfixe -> _PrefixChip
+        self._fits = None              # prédicat (texte)->bool : tient-il à l'écran ?
+        self._deck_cache = None        # (pred_id, deck, meta) — découpage mémorisé
 
         self._build_ui()
 
@@ -601,8 +604,9 @@ class PredicationPanel(QWidget):
             self._para_buttons[number] = btn
             self.para_flow.addWidget(btn)
 
-    def _select_paragraph(self, number):
+    def _select_paragraph(self, number, part=0):
         self._paragraph = number
+        self._part = part
         for n, row in getattr(self, "_para_rows", {}).items():
             row.set_active(n == number)
         for n, btn in getattr(self, "_para_buttons", {}).items():
@@ -650,23 +654,70 @@ class PredicationPanel(QWidget):
             self.status_right.setText("Sélectionnez un paragraphe")
 
     # ----------------------- Diapositives / signaux ----------------------- #
+    def set_fit_predicate(self, fits):
+        """Injecte un prédicat `(texte)->bool` : le texte tient-il dans la
+        projection ? Un paragraphe trop long est alors découpé en plusieurs
+        diapositives (« Titre · §3 · 2/4 »)."""
+        self._fits = fits
+        self._deck_cache = None
+
+    def invalidate_deck(self):
+        """À appeler quand les conditions de mesure changent (taille du texte,
+        écran cible) : le découpage sera recalculé à la prochaine demande."""
+        self._deck_cache = None
+
+    def _build_deck(self):
+        """(diapositives, méta) : méta[i] = (numéro de paragraphe, partie).
+
+        Un paragraphe = une diapositive, sauf s'il ne tient pas dans la
+        projection (`set_fit_predicate`) : il est alors découpé par mots en
+        autant de parties que nécessaire, chacune libellée « i/n ». Le résultat
+        est mémorisé par prédication (la mesure de place est coûteuse)."""
+        pred_id = self._predication["id"] if self._predication else None
+        if self._deck_cache is not None and self._deck_cache[0] == pred_id:
+            return self._deck_cache[1], self._deck_cache[2]
+        deck, meta = [], []
+        title = self._predication["title_fr"] if self._predication else ""
+        fits = self._fits
+        for number, text in self._paragraphs:
+            label = f"{title} · §{number}"
+            # La mesure inclut un gabarit de suffixe « 99/99 » : le libellé réel
+            # « i/n » ajouté ensuite ne peut alors pas faire déborder la diapo.
+            pred = None if fits is None else (
+                lambda chunk, label=label: fits(f"{chunk}\n{label} · 99/99")
+            )
+            chunks = slides.split_to_fit(text, pred)
+            total = len(chunks)
+            for part, chunk in enumerate(chunks):
+                suffix = label if total == 1 else f"{label} · {part + 1}/{total}"
+                deck.append(f"{chunk}\n{suffix}")
+                meta.append((number, part))
+        self._deck_cache = (pred_id, deck, meta)
+        return deck, meta
+
     def current_deck(self):
-        """(liste de diapositives, index) : un paragraphe = une diapositive."""
+        """(liste de diapositives, index sélectionné) de la prédication courante."""
         if not self._paragraphs:
             return [], 0
-        title = self._predication["title_fr"] if self._predication else ""
-        deck = [f"{text}\n{title} · §{number}" for number, text in self._paragraphs]
-        index = (self._paragraph or 1) - 1
-        index = max(0, min(index, len(deck) - 1))
+        deck, meta = self._build_deck()
+        number = self._paragraph or self._paragraphs[0][0]
+        if (number, self._part) in meta:
+            index = meta.index((number, self._part))
+        else:
+            index = next((i for i, (n, _p) in enumerate(meta) if n == number), 0)
         return deck, index
 
     def select_slide(self, index):
-        """Sélection d'un paragraphe par index de diapositive (navigation du poste)."""
-        numbers = [n for n, _t in self._paragraphs]
-        if not numbers:
+        """Sélection d'une diapositive (paragraphe ou partie de paragraphe) par
+        son index — navigation du poste de contrôle."""
+        if not self._paragraphs:
             return
-        index = max(0, min(index, len(numbers) - 1))
-        self._select_paragraph(numbers[index])
+        _deck, meta = self._build_deck()
+        if not meta:
+            return
+        index = max(0, min(index, len(meta) - 1))
+        number, part = meta[index]
+        self._select_paragraph(number, part)
 
     def _on_project_clicked(self):
         if self._paragraph is None and self._paragraphs:

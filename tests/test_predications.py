@@ -181,6 +181,36 @@ def test_panneau_predication(qapp):
     assert panel._paragraph == 3
 
 
+def test_decoupage_paragraphes_selon_la_place(qapp):
+    """Un paragraphe qui ne tient pas dans la projection est découpé en
+    plusieurs diapositives « i/n », navigables individuellement."""
+    predications.import_data({
+        "predications": [
+            {"date_code": "60-0101", "title_fr": "Alpha", "title_en": "",
+             "paragraphs": ["un deux trois quatre cinq six", "court"]},
+        ]
+    })
+    from logos.ui.predication_panel import PredicationPanel
+
+    panel = PredicationPanel()
+    panel.set_fit_predicate(lambda text: len(text) <= 25)
+    deck, index = panel.current_deck()
+    assert index == 0
+    assert len(deck) > 2                      # le §1 a été découpé
+    assert deck[0].endswith("· 1/" + str(len(deck) - 1))
+    assert deck[-1] == "court\nAlpha · §2"    # le §2 tient : pas de suffixe
+    # Chaque diapositive respecte la contrainte de place.
+    assert all(len(slide) <= 25 for slide in deck)
+
+    # Navigation par diapositive : les parties d'un même paragraphe défilent.
+    panel.select_slide(1)
+    assert panel._paragraph == 1 and panel._part == 1
+    deck2, index2 = panel.current_deck()
+    assert index2 == 1
+    panel.select_slide(len(deck) - 1)
+    assert panel._paragraph == 2 and panel._part == 0
+
+
 def test_panneau_indisponible(qapp):
     from logos.ui.predication_panel import PredicationPanel
 

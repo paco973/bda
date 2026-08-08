@@ -655,3 +655,7 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+
+# La recette PyInstaller de BDA fait partie du dépôt (le motif *.spec ci-dessus
+# vise les fichiers générés automatiquement par pyinstaller à la racine).
+!packaging/bda.spec

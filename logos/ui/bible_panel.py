@@ -617,7 +617,15 @@ class BiblePanel(QWidget):
 
     # --------------------------- Recherche -------------------------------- #
     def _on_search(self, text):
-        query = text.strip().lower()
+        query = text.strip()
+        # Référence directe (« Jean 3:16 », « 1 co 13 ») : saute au passage dès
+        # qu'un chapitre est saisi, sans filtrer la grille pendant la frappe.
+        if self._books:
+            ref = bible.parse_reference(query)
+            if ref is not None and ref[1] is not None:
+                self._jump_to_reference(*ref)
+                return
+        query = query.lower()
         for book in self._books:
             match = (
                 not query
@@ -625,6 +633,22 @@ class BiblePanel(QWidget):
                 or query in bible.book_abbreviation(book["id"]).lower()
             )
             self._book_cards[book["id"]].set_dimmed(not match)
+
+    def _jump_to_reference(self, book_id, chapter, verse):
+        """Navigue vers la référence (bornée aux chapitres/versets existants)."""
+        book = self._find_book(book_id)
+        if book is None:
+            return
+        for card in self._book_cards.values():
+            card.set_dimmed(False)
+        if self._book is None or self._book["id"] != book_id:
+            self._select_book(book_id)
+        chapter = max(1, min(chapter, book["chapters"]))
+        if self._chapter != chapter:
+            self._select_chapter(chapter)
+        if verse is not None and self._chapter_verses:
+            numbers = [v for v, _t in self._chapter_verses]
+            self._select_verse(max(numbers[0], min(verse, numbers[-1])))
 
     # ----------------------------- Statut --------------------------------- #
     def _current_reference(self):

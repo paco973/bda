@@ -40,6 +40,25 @@ def test_navigation_accueil_bible(qapp):
         win.close()
 
 
+def test_reglages_persistants(qapp):
+    """Taille du texte et versets par diapositive sont restaurés au relancement."""
+    from logos.ui.control_window import ControlWindow
+
+    win = ControlWindow()
+    try:
+        win.controller.set_font_size(72)
+        win.bible_panel.verses_spin.setValue(4)
+    finally:
+        win.close()
+
+    win2 = ControlWindow()
+    try:
+        assert win2.controller.font_size() == 72
+        assert win2.bible_panel.verses_spin.value() == 4
+    finally:
+        win2.close()
+
+
 def test_projection_d_un_verset(qapp):
     bible.ensure_imported()
     from logos.ui.control_window import ControlWindow

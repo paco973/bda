@@ -12,25 +12,17 @@ simple (« Élie » -> lettre E, préfixe « El »).
 import gzip
 import hashlib
 import json
-import unicodedata
-from pathlib import Path
-
 from logos.data.database import get_connection, get_meta, set_meta
+from logos.data.textutils import strip_accents
+from logos.resources import asset_path
 
-PREDICATIONS_ASSET = Path(__file__).parent.parent / "assets" / "predications.json.gz"
+PREDICATIONS_ASSET = asset_path("predications.json.gz")
 SOURCE = "branham.fr"
-
-
-def _strip_accents(text: str) -> str:
-    return "".join(
-        c for c in unicodedata.normalize("NFD", text)
-        if unicodedata.category(c) != "Mn"
-    )
 
 
 def title_letter(title_fr: str) -> str:
     """1re lettre de classement (A-Z, sans accent) ou « # » si non alphabétique."""
-    for char in _strip_accents(title_fr):
+    for char in strip_accents(title_fr):
         if char.isalpha():
             return char.upper()
     return "#"
@@ -38,7 +30,7 @@ def title_letter(title_fr: str) -> str:
 
 def title_prefix(title_fr: str) -> str:
     """Préfixe de classement : 2 premières lettres, ex. « Ab », « El »."""
-    letters = [c for c in _strip_accents(title_fr) if c.isalpha()]
+    letters = [c for c in strip_accents(title_fr) if c.isalpha()]
     prefix = "".join(letters[:2])
     return prefix[:1].upper() + prefix[1:].lower()
 
