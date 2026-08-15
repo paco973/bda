@@ -32,17 +32,23 @@ from logos.version import __version__
 # « Rechercher les mises à jour » le dit clairement). À remplir par le
 # mainteneur quand un emplacement de publication existe — par exemple
 # https://raw.githubusercontent.com/<compte>/<depot>/main/latest.json
-MANIFEST_URL = ""
+MANIFEST_URL = "https://github.com/paco973/bda/releases/latest/download/latest.json"
 
 TIMEOUT_SECONDS = 5
 MAX_RESPONSE_BYTES = 64 * 1024
 MAX_NOTES_CHARS = 500
 
 # Issues possibles d'une vérification.
-DISABLED = "disabled"      # aucune URL configurée : rien n'a été tenté
-ERROR = "error"            # réseau injoignable, réponse illisible ou invalide
-UP_TO_DATE = "up_to_date"  # cette version est la plus récente publiée
-AVAILABLE = "available"    # une version plus récente existe
+DISABLED = "disabled"              # aucune URL configurée : rien n'a été tenté
+ERROR = "error"                    # réseau injoignable ou réponse illisible
+NOT_PUBLISHED = "not_published"    # serveur joignable, mais rien à cette adresse
+UP_TO_DATE = "up_to_date"          # cette version est la plus récente publiée
+AVAILABLE = "available"            # une version plus récente existe
+
+
+class _NotFound(Exception):
+    """Le serveur a répondu 404 : aucune version publiée, ou adresse erronée.
+    C'est un cas distinct d'une panne réseau — il mérite son propre message."""
 
 
 @dataclass(frozen=True)
@@ -104,10 +110,17 @@ def is_configured(manifest_url=None) -> bool:
 
 
 def _fetch(url):
-    """Le manifeste décodé, ou None si quoi que ce soit se passe mal."""
+    """Le manifeste décodé, ou None si la réponse est inutilisable.
+
+    Lève `_NotFound` sur un 404, seul cas où l'on sait que le serveur va bien
+    et que c'est le manifeste qui manque (release pas encore publiée)."""
     try:
         with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
+    except urllib.error.HTTPError as exc:  # sous-classe d'URLError : à tester avant
+        if exc.code == 404:
+            raise _NotFound from exc
+        return None
     except (urllib.error.URLError, OSError, ValueError):
         return None
     if len(raw) > MAX_RESPONSE_BYTES:
@@ -128,7 +141,10 @@ def check_for_update(manifest_url=None, current_version=__version__) -> CheckRes
     url = MANIFEST_URL if manifest_url is None else manifest_url
     if not _is_https(url):
         return CheckResult(DISABLED)
-    payload = _fetch(url)
+    try:
+        payload = _fetch(url)
+    except _NotFound:
+        return CheckResult(NOT_PUBLISHED)
     if payload is None:
         return CheckResult(ERROR)
 

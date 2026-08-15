@@ -454,6 +454,14 @@ class ControlWindow(QMainWindow):
                 + (f"\n\n{result.release.notes}" if result.release.notes else "")
             )
             box.exec()
+        elif result.status == updates.NOT_PUBLISHED:
+            QMessageBox.information(
+                self,
+                "Mises à jour",
+                "Aucune version n'est publiée pour l'instant à l'adresse de "
+                "mise à jour : le serveur répond bien, mais le fichier "
+                "« latest.json » y est introuvable.",
+            )
         elif result.status == updates.UP_TO_DATE:
             QMessageBox.information(
                 self,

@@ -101,6 +101,19 @@ def test_erreur_reseau_ne_leve_pas(fake_manifest):
     assert updates.check_for_update(MANIFEST_URL, "1.0.0").status == updates.ERROR
 
 
+def test_404_distingue_de_la_panne_reseau(fake_manifest):
+    """Cas courant tant qu'aucune release n'est publiée : le serveur répond,
+    c'est le manifeste qui manque. Le dire précisément évite de faire croire
+    à une panne."""
+    fake_manifest(urllib.error.HTTPError(MANIFEST_URL, 404, "Not Found", {}, None))
+    assert updates.check_for_update(MANIFEST_URL, "1.0.0").status == updates.NOT_PUBLISHED
+
+
+def test_autre_erreur_http_reste_une_erreur(fake_manifest):
+    fake_manifest(urllib.error.HTTPError(MANIFEST_URL, 500, "Server Error", {}, None))
+    assert updates.check_for_update(MANIFEST_URL, "1.0.0").status == updates.ERROR
+
+
 def test_reponse_illisible(fake_manifest):
     fake_manifest(b"<html>page d'erreur</html>")
     assert updates.check_for_update(MANIFEST_URL, "1.0.0").status == updates.ERROR
