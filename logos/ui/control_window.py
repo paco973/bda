@@ -17,13 +17,19 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
+from logos import updates
 from logos.data.database import get_meta, set_meta
 from logos.ui import theme
 from logos.ui.bible_panel import BiblePanel
 from logos.ui.predication_panel import PredicationPanel
+from logos.ui.update_banner import UpdateBanner, check_async
 from logos.ui.widgets import circular_logo
 from logos.ui.projection_controller import ProjectionController
 from logos.ui.projection_controls import ProjectionControls, ProjectionSettingsBar
+from logos.version import __version__
+
+# Clé `meta` du réglage « vérifier les mises à jour au démarrage ».
+_AUTO_CHECK_KEY = "check_updates_on_startup"
 
 
 class _HomeCard(QFrame):
@@ -105,6 +111,8 @@ class ControlWindow(QMainWindow):
         app.screenAdded.connect(lambda _s: self.controller.refresh_screens())
         app.screenRemoved.connect(lambda _s: self.controller.refresh_screens())
 
+        self._check_updates_on_startup()
+
     def _fit_key(self):
         return (self.controller.font_size(), id(self.controller.screen()))
 
@@ -168,10 +176,15 @@ class ControlWindow(QMainWindow):
         )
         self.stack.currentChanged.connect(self._update_settings_bar_visibility)
 
+        # Bandeau « nouvelle version disponible » : masqué tant qu'aucune mise à
+        # jour n'a été trouvée, au-dessus de tout le reste.
+        self.update_banner = UpdateBanner()
+
         central = QWidget()
         central_layout = QVBoxLayout(central)
         central_layout.setContentsMargins(0, 0, 0, 0)
         central_layout.setSpacing(0)
+        central_layout.addWidget(self.update_banner)
         central_layout.addWidget(self.stack, 1)
         central_layout.addWidget(self.settings_bar)
         self.setCentralWidget(central)
@@ -345,6 +358,17 @@ class ControlWindow(QMainWindow):
         view_menu.addAction(action("Prédications", self._open_predications, "F4"))
 
         help_menu = bar.addMenu("Aide")
+        help_menu.addAction(
+            action("Rechercher les mises à jour…", self._check_updates_manually)
+        )
+        self.auto_check_action = QAction("Vérifier au démarrage", self)
+        self.auto_check_action.setCheckable(True)
+        self.auto_check_action.setChecked(self._auto_check_enabled())
+        self.auto_check_action.toggled.connect(
+            lambda enabled: set_meta(_AUTO_CHECK_KEY, "1" if enabled else "0")
+        )
+        help_menu.addAction(self.auto_check_action)
+        help_menu.addSeparator()
         help_menu.addAction(action("À propos", self._show_about))
 
         # Raccourcis de projection (agissent sur le mode affiché) : conservés au
@@ -382,11 +406,68 @@ class ControlWindow(QMainWindow):
         QMessageBox.about(
             self,
             f"À propos de {theme.APP_NAME}",
-            f"<b>{theme.APP_NAME}</b><br>"
+            f"<b>{theme.APP_NAME}</b> — version {__version__}<br>"
             "Logiciel de présentation pour l'église.<br><br>"
             "Projection des passages bibliques et des paragraphes de "
             "prédications sur un écran secondaire pendant les cultes.",
         )
+
+    # ---------- Mises à jour ----------
+    def _auto_check_enabled(self) -> bool:
+        """Vérification au démarrage : activée sauf refus explicite."""
+        return get_meta(_AUTO_CHECK_KEY) != "0"
+
+    def _check_updates_on_startup(self):
+        """Vérification silencieuse au lancement : elle n'affiche le bandeau que
+        s'il y a effectivement une nouvelle version, et ne dit rien en cas
+        d'échec — un poste sans connexion ne doit voir aucune alerte."""
+        if self._auto_check_enabled() and updates.is_configured():
+            check_async(self, self._on_startup_check_done)
+
+    def _on_startup_check_done(self, result):
+        if result.status == updates.AVAILABLE:
+            self.update_banner.show_release(result.release)
+
+    def _check_updates_manually(self):
+        """Vérification demandée depuis le menu : ici, toutes les issues sont
+        rapportées, y compris « pas d'URL configurée » et l'échec réseau."""
+        if not updates.is_configured():
+            QMessageBox.information(
+                self,
+                "Mises à jour",
+                "Aucune adresse de mise à jour n'est configurée dans cette "
+                "version de l'application : la recherche automatique est "
+                "désactivée.",
+            )
+            return
+        check_async(self, self._on_manual_check_done)
+
+    def _on_manual_check_done(self, result):
+        if result.status == updates.AVAILABLE:
+            self.update_banner.show_release(result.release)
+            box = QMessageBox(self)
+            box.setWindowTitle("Mises à jour")
+            box.setTextFormat(Qt.PlainText)  # notes distantes : jamais du HTML
+            box.setText(
+                f"La version {result.release.version} est disponible "
+                f"(vous utilisez la {__version__})."
+                + (f"\n\n{result.release.notes}" if result.release.notes else "")
+            )
+            box.exec()
+        elif result.status == updates.UP_TO_DATE:
+            QMessageBox.information(
+                self,
+                "Mises à jour",
+                f"{theme.APP_NAME} est à jour (version {__version__}).",
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "Mises à jour",
+                "Impossible de vérifier les mises à jour : le serveur est "
+                "injoignable ou sa réponse est illisible.\n\n"
+                "Ce n'est pas bloquant, l'application fonctionne hors ligne.",
+            )
 
     # ---------- Bible ----------
     def _on_bible_selection(self):

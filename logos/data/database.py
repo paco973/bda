@@ -8,9 +8,10 @@ prédications réimportées depuis `logos/assets/`) : changer d'emplacement ne
 perd aucune donnée utilisateur.
 """
 import sqlite3
-from pathlib import Path
 
-DB_PATH = Path.home() / ".bda" / "bda.db"
+from logos.resources import USER_DIR
+
+DB_PATH = USER_DIR / "bda.db"
 
 
 def get_connection():

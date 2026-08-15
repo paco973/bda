@@ -1,0 +1,108 @@
+# Construit BDA pour macOS et Windows, puis publie une release GitHub.
+#
+# Déclenchement : pousser un tag de version.
+#
+#     # après avoir mis à jour logos/version.py
+#     git tag v1.0.1 && git push origin v1.0.1
+#
+# Le tag doit correspondre à `logos/version.py` — sinon le workflow s'arrête
+# avant de construire, pour ne pas publier une version dont le numéro affiché
+# dans l'application contredirait celui de la release.
+#
+# Le corpus de prédications (copyright branham.fr/VGR) n'est pas embarqué :
+# `packaging/bda.spec` l'exclut sauf si BDA_BUNDLE_PREDICATIONS=1, qui n'est
+# volontairement défini nulle part ici.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # nécessaire pour créer la release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            label: macOS (Apple Silicon)
+          - os: windows-latest
+            label: Windows
+    name: Construire pour ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Vérifier que le tag correspond à logos/version.py
+        shell: bash
+        run: |
+          version=$(python -c "import re,pathlib; \
+            print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', \
+            pathlib.Path('logos/version.py').read_text()).group(1))")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME ≠ version $version de logos/version.py" >&2
+            exit 1
+          fi
+
+      - name: Installer les dépendances
+        run: pip install -r requirements-build.txt -r requirements-dev.txt
+
+      - name: Lancer les tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests/ -q
+
+      - name: Construire l'exécutable
+        run: pyinstaller --noconfirm --clean packaging/bda.spec
+
+      - name: Empaqueter (archive + somme de contrôle)
+        run: python packaging/package.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bda-${{ matrix.os }}
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publier la release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      # Manifeste lu par « Aide > Rechercher les mises à jour » : il pointe vers
+      # la page de la dernière release, à charge de l'utilisateur d'y prendre
+      # l'archive de sa plateforme.
+      - name: Générer latest.json
+        run: |
+          python packaging/package.py --manifest-only \
+            --out artifacts \
+            --release-url "https://github.com/${{ github.repository }}/releases/latest"
+
+      - name: Créer la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "BDA $GITHUB_REF_NAME" \
+            --generate-notes \
+            artifacts/*

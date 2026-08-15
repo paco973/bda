@@ -659,3 +659,7 @@ cython_debug/
 # La recette PyInstaller de BDA fait partie du dépôt (le motif *.spec ci-dessus
 # vise les fichiers générés automatiquement par pyinstaller à la racine).
 !packaging/bda.spec
+
+# Corpus de prédications : contenu sous copyright (branham.fr / VGR), à ne
+# jamais publier avec le code. Chaque poste le reçoit via ~/.bda/assets/.
+logos/assets/predications.json.gz

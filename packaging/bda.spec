@@ -11,15 +11,41 @@ unique et plus simple à dépanner (les assets restent visibles).
 Les assets embarqués (`logos/assets/`) sont copiés en conservant l'arborescence
 attendue par `logos/resources.py`.
 """
+import os
+import re
 from pathlib import Path
 
 ROOT = Path(SPECPATH).parent
 ICONS = Path(SPECPATH) / "icons"
 
-# Bible + logo (+ prédications si l'asset est présent : il n'est pas versionné).
-# La destination doit rester `logos/assets` : c'est là que `logos/resources.py`
-# va chercher les fichiers une fois l'application gelée.
-datas = [(str(ROOT / "logos" / "assets"), "logos/assets")]
+# Version lue dans `logos/version.py` (source unique) : on la relit par regex
+# plutôt que d'importer le paquet, pour ne rien exécuter au moment du build.
+VERSION = re.search(
+    r'__version__\s*=\s*"([^"]+)"',
+    (ROOT / "logos" / "version.py").read_text(encoding="utf-8"),
+).group(1)
+
+# Assets embarqués. La destination doit rester `logos/assets` : c'est là que
+# `logos/resources.py` va chercher les fichiers une fois l'application gelée.
+#
+# Le corpus de prédications est sous copyright (branham.fr / VGR) : il n'est
+# embarqué **que sur demande explicite**, pour qu'un paquet destiné à une
+# diffusion publique ne le contienne jamais par inadvertance. Pour un build
+# interne à l'église, exporter BDA_BUNDLE_PREDICATIONS=1 avant de lancer
+# pyinstaller. Sans lui, l'appli démarre et le mode Prédications affiche
+# « non disponible » — le corpus peut être déposé ensuite dans ~/.bda/assets/.
+BUNDLE_PREDICATIONS = os.environ.get("BDA_BUNDLE_PREDICATIONS") == "1"
+RESTRICTED_ASSETS = {"predications.json.gz"}
+
+datas = []
+for asset in sorted((ROOT / "logos" / "assets").iterdir()):
+    if not asset.is_file():
+        continue
+    if asset.name in RESTRICTED_ASSETS and not BUNDLE_PREDICATIONS:
+        print(f"bda.spec : {asset.name} exclu du paquet (copyright) — "
+              "BDA_BUNDLE_PREDICATIONS=1 pour l'inclure.")
+        continue
+    datas.append((str(asset), "logos/assets"))
 
 # Modules tirés par les dépendances mais inutiles ici : on allège le paquet.
 excludes = [
@@ -74,8 +100,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "BDA",
         "CFBundleDisplayName": "BDA",
-        "CFBundleShortVersionString": "1.0.0",
-        "CFBundleVersion": "1.0.0",
+        "CFBundleShortVersionString": VERSION,
+        "CFBundleVersion": VERSION,
         "NSHighResolutionCapable": True,
         "LSApplicationCategoryType": "public.app-category.productivity",
     },

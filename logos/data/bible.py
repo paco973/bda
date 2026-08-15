@@ -2,16 +2,22 @@
 Accès à la Bible embarquée (Louis Segond 1910, domaine public).
 Le texte est livré compressé dans logos/assets/ et importé dans SQLite
 au premier lancement — l'application reste 100 % hors ligne.
+
+Comme les prédications, le texte peut être remplacé sans réinstaller en
+déposant un fichier dans `~/.bda/assets/` (voir `logos.resources`).
 """
 import gzip
 import hashlib
 import json
 import re
+import sys
+
 from logos.data.database import get_connection, get_meta, set_meta
 from logos.data.textutils import strip_accents
-from logos.resources import asset_path
+from logos.resources import asset_path, bundled_asset_path
 
-BIBLE_ASSET = asset_path("bible_ls1910.json.gz")
+ASSET_NAME = "bible_ls1910.json.gz"
+BIBLE_ASSET = asset_path(ASSET_NAME)
 TRANSLATION = "Louis Segond (1910)"
 TRANSLATION_CODE = "LSG"
 
@@ -104,22 +110,49 @@ def is_available() -> bool:
 _ASSET_META_KEY = "bible_asset_sha256"
 
 
-def _asset_fingerprint() -> str:
-    return hashlib.sha256(BIBLE_ASSET.read_bytes()).hexdigest()
+def _asset_fingerprint(asset) -> str:
+    return hashlib.sha256(asset.read_bytes()).hexdigest()
+
+
+def _candidate_assets():
+    """Fichiers à essayer, du plus prioritaire au repli : le texte retenu par
+    `logos.resources` (dépôt de l'opérateur s'il existe) puis, si celui-ci est
+    illisible, celui livré avec l'application."""
+    paths, seen = [], set()
+    for path in (BIBLE_ASSET, bundled_asset_path(ASSET_NAME)):
+        if path not in seen and path.exists():
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def _import_asset(asset):
+    """Importe `asset`, sauf si son empreinte est déjà celle en base."""
+    fingerprint = _asset_fingerprint(asset)
+    if is_available() and get_meta(_ASSET_META_KEY) == fingerprint:
+        return
+    with gzip.open(asset, "rt", encoding="utf-8") as f:
+        import_data(json.load(f))
+    set_meta(_ASSET_META_KEY, fingerprint)
 
 
 def ensure_imported():
-    """Importe la Bible embarquée si absente de la base **ou** si l'asset a
-    changé depuis le dernier import (empreinte stockée dans `meta`) — même
-    mécanique que les prédications. L'import initial prend quelques secondes."""
-    if not BIBLE_ASSET.exists():
-        return
-    fingerprint = _asset_fingerprint()
-    if is_available() and get_meta(_ASSET_META_KEY) == fingerprint:
-        return
-    with gzip.open(BIBLE_ASSET, "rt", encoding="utf-8") as f:
-        import_data(json.load(f))
-    set_meta(_ASSET_META_KEY, fingerprint)
+    """Importe la Bible si absente de la base **ou** si l'asset a changé depuis
+    le dernier import (empreinte stockée dans `meta`) — même mécanique que les
+    prédications. L'import initial prend quelques secondes.
+
+    Un texte déposé illisible ne doit pas empêcher l'application de démarrer :
+    on signale le problème et on retombe sur celui livré."""
+    for asset in _candidate_assets():
+        try:
+            _import_asset(asset)
+            return
+        except (OSError, ValueError) as exc:
+            print(
+                f"BDA : Bible illisible dans {asset} ({exc}) — "
+                "repli sur le texte livré avec l'application.",
+                file=sys.stderr,
+            )
 
 
 def import_data(data: dict):

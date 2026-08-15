@@ -5,6 +5,10 @@ Les prédications sont livrées dans un fichier compressé sous `logos/assets/`
 (généré une fois par le script `scripts/scrape_predications.py`) et importées
 dans SQLite au premier lancement — l'application reste 100 % hors ligne.
 
+Le corpus se met à jour sans réinstaller : déposer un nouveau
+`predications.json.gz` dans `~/.bda/assets/` (voir `logos.resources`) suffit,
+le changement d'empreinte déclenchant le réimport au lancement suivant.
+
 `letter` (1re lettre) et `prefix` (2 premières lettres) sont dérivés du titre
 français à l'import : le titre est « désaccentué » pour un regroupement A-Z
 simple (« Élie » -> lettre E, préfixe « El »).
@@ -12,11 +16,14 @@ simple (« Élie » -> lettre E, préfixe « El »).
 import gzip
 import hashlib
 import json
+import sys
+
 from logos.data.database import get_connection, get_meta, set_meta
 from logos.data.textutils import strip_accents
-from logos.resources import asset_path
+from logos.resources import asset_path, bundled_asset_path
 
-PREDICATIONS_ASSET = asset_path("predications.json.gz")
+ASSET_NAME = "predications.json.gz"
+PREDICATIONS_ASSET = asset_path(ASSET_NAME)
 SOURCE = "branham.fr"
 
 
@@ -48,22 +55,49 @@ def is_available() -> bool:
 _ASSET_META_KEY = "predications_asset_sha256"
 
 
-def _asset_fingerprint() -> str:
-    return hashlib.sha256(PREDICATIONS_ASSET.read_bytes()).hexdigest()
+def _asset_fingerprint(asset) -> str:
+    return hashlib.sha256(asset.read_bytes()).hexdigest()
+
+
+def _candidate_assets():
+    """Fichiers à essayer, du plus prioritaire au repli : le corpus retenu par
+    `logos.resources` (dépôt de l'opérateur s'il existe) puis, si celui-ci est
+    illisible, celui livré avec l'application."""
+    paths, seen = [], set()
+    for path in (PREDICATIONS_ASSET, bundled_asset_path(ASSET_NAME)):
+        if path not in seen and path.exists():
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def _import_asset(asset):
+    """Importe `asset`, sauf si son empreinte est déjà celle en base."""
+    fingerprint = _asset_fingerprint(asset)
+    if is_available() and get_meta(_ASSET_META_KEY) == fingerprint:
+        return
+    with gzip.open(asset, "rt", encoding="utf-8") as f:
+        import_data(json.load(f))
+    set_meta(_ASSET_META_KEY, fingerprint)
 
 
 def ensure_imported():
-    """Importe les prédications embarquées si absentes de la base **ou** si
-    l'asset a changé depuis le dernier import (empreinte stockée dans `meta`),
-    afin qu'une mise à jour du corpus embarqué soit reprise automatiquement."""
-    if not PREDICATIONS_ASSET.exists():
-        return
-    fingerprint = _asset_fingerprint()
-    if is_available() and get_meta(_ASSET_META_KEY) == fingerprint:
-        return
-    with gzip.open(PREDICATIONS_ASSET, "rt", encoding="utf-8") as f:
-        import_data(json.load(f))
-    set_meta(_ASSET_META_KEY, fingerprint)
+    """Importe les prédications si absentes de la base **ou** si l'asset a
+    changé depuis le dernier import (empreinte stockée dans `meta`) : déposer
+    un corpus à jour dans `~/.bda/assets/` suffit donc à le mettre à jour.
+
+    Un fichier déposé illisible ne doit pas empêcher l'application de démarrer :
+    on signale le problème et on retombe sur le corpus livré."""
+    for asset in _candidate_assets():
+        try:
+            _import_asset(asset)
+            return
+        except (OSError, ValueError) as exc:
+            print(
+                f"BDA : prédications illisibles dans {asset} ({exc}) — "
+                "repli sur le corpus livré avec l'application.",
+                file=sys.stderr,
+            )
 
 
 def import_data(data: dict):
