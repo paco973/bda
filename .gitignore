@@ -663,3 +663,12 @@ cython_debug/
 # Corpus de prédications : contenu sous copyright (branham.fr / VGR), à ne
 # jamais publier avec le code. Chaque poste le reçoit via ~/.bda/assets/.
 logos/assets/predications.json.gz
+
+# Le motif « [Ss]cripts » plus haut vient du modèle Visual Studio, où il vise le
+# dossier Scripts/ d'un virtualenv Windows (déjà couvert ici par .venv). Il
+# avalait aussi notre dossier scripts/ : le script d'import n'était donc pas
+# publié, et les tests de ses parseurs échouaient en CI. Il faut ré-inclure le
+# dossier avant le fichier — git ne sait pas réintégrer un fichier dont le
+# dossier parent est exclu.
+!scripts/
+!scripts/scrape_predications.py
