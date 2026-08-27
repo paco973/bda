@@ -163,6 +163,48 @@ def test_parse_paragraphs_ignore_habillage_page():
     ]
 
 
+def test_download_corpus_simule(monkeypatch):
+    """`scrape.download_corpus` : filtre par initiale désaccentuée, structure
+    du corpus, annulation via `should_stop` (réseau simulé)."""
+    from logos.data import scrape
+
+    index_html = (
+        '<tr><td><span class="arial text-nowrap">63-0101</span></td>'
+        '<td><a href="/sermons/1-Elijah" class="arialN">Élie</a></td>'
+        '<td class="d-none d-xl-table-cell">Elijah</td></tr>'
+        '<tr><td><span class="arial text-nowrap">59-1004</span></td>'
+        '<td><a href="/sermons/2-Abraham" class="arialN">Abraham</a></td>'
+        '<td class="d-none d-xl-table-cell">Abraham</td></tr>'
+    )
+    sermon_html = (
+        '<div class="scalText x"><p>1 &nbsp;Un.<br>\n<br>\n2 &nbsp;Deux.</p></div>'
+    )
+    monkeypatch.setattr(
+        scrape, "fetch",
+        lambda url: index_html if url == scrape.INDEX_URL else sermon_html,
+    )
+
+    # « E » attrape « Élie » (initiale désaccentuée), pas « Abraham ».
+    data = scrape.download_corpus(letters="E", delay=0)
+    assert [p["title_fr"] for p in data["predications"]] == ["Élie"]
+    assert data["predications"][0]["paragraphs"] == ["Un.", "Deux."]
+    assert data["source"] == "branham.fr"
+
+    # Annulation : aucun résultat partiel.
+    assert scrape.download_corpus(delay=0, should_stop=lambda: True) is None
+
+
+def test_save_user_corpus(tmp_path, monkeypatch):
+    """Le corpus téléchargé est déposé dans le dossier opérateur et importé."""
+    from logos import resources
+
+    monkeypatch.setattr(resources, "USER_ASSETS_DIR", tmp_path / "assets")
+    path = predications.save_user_corpus(SAMPLE)
+    assert path == tmp_path / "assets" / "predications.json.gz"
+    assert path.exists()
+    assert predications.total_count() == 4
+
+
 # ------------------------------ Panneau UI ---------------------------- #
 @pytest.fixture(scope="session")
 def qapp():
@@ -224,3 +266,17 @@ def test_panneau_indisponible(qapp):
     panel = PredicationPanel()  # base vide : rien importé
     assert not panel.project_btn.isEnabled()
     assert panel.current_deck() == ([], 0)
+
+    # L'état vide propose le téléchargement intégré (signal vers la fenêtre).
+    received = []
+    panel.download_requested.connect(lambda: received.append(True))
+    panel.download_btn.click()
+    assert received == [True]
+
+    # Après import (téléchargement terminé), reload() ranime le panneau.
+    predications.import_data(SAMPLE)
+    panel.reload()
+    assert panel.project_btn.isEnabled()
+    assert panel._letter == "A"
+    deck, _index = panel.current_deck()
+    assert deck

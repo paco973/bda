@@ -4,7 +4,7 @@ Fenêtre principale : page d'accueil et modes Bible et Prédications.
 Chaque mode embarque son propre poste de contrôle (`ProjectionControls`).
 Un `ProjectionController` partagé possède l'unique fenêtre de projection.
 """
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QAction, QKeySequence
 from PySide6.QtWidgets import (
     QMainWindow,
@@ -13,11 +13,13 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
     QLabel,
+    QProgressDialog,
     QStackedWidget,
     QMessageBox,
 )
 
 from logos import updates
+from logos.data import predications, scrape
 from logos.data.database import get_meta, set_meta
 from logos.ui import theme
 from logos.ui.bible_panel import BiblePanel
@@ -30,6 +32,44 @@ from logos.version import __version__
 
 # Clé `meta` du réglage « vérifier les mises à jour au démarrage ».
 _AUTO_CHECK_KEY = "check_updates_on_startup"
+
+
+# --------------------------------------------------------------------------- #
+#  Téléchargement du corpus de prédications en tâche de fond
+# --------------------------------------------------------------------------- #
+class _DownloadSignals(QObject):
+    """Porte les signaux du téléchargement (un QRunnable n'est pas un QObject)."""
+    progress = Signal(int, int, str)   # (i, total, libellé)
+    finished = Signal(object)          # corpus (dict), ou None si annulé
+    failed = Signal(str)               # l'index est injoignable
+
+
+class _DownloadTask(QRunnable):
+    """Télécharge le corpus hors du fil de l'interface (opération très longue :
+    la fenêtre doit rester utilisable, et le direct ne doit jamais se figer)."""
+
+    def __init__(self, signals, should_stop):
+        super().__init__()
+        self._signals = signals
+        self._should_stop = should_stop
+
+    def run(self):
+        try:
+            data = scrape.download_corpus(
+                on_progress=self._signals.progress.emit,
+                should_stop=self._should_stop,
+            )
+        except Exception as exc:  # index injoignable : rien n'a été modifié
+            self._emit(self._signals.failed, str(exc))
+            return
+        self._emit(self._signals.finished, data)
+
+    @staticmethod
+    def _emit(signal, payload):
+        try:
+            signal.emit(payload)
+        except RuntimeError:
+            pass  # fenêtre fermée entre-temps : plus personne à prévenir
 
 
 class _HomeCard(QFrame):
@@ -245,6 +285,7 @@ class ControlWindow(QMainWindow):
         self.predication_panel = PredicationPanel()
         # Découpe les paragraphes trop longs selon la place dans la projection.
         self.predication_panel.set_fit_predicate(self.controller.text_fits)
+        self.predication_panel.download_requested.connect(self._download_predications)
         self.predication_panel.close_requested.connect(self._go_home)
         self.predication_panel.selection_changed.connect(self._on_predication_selection)
         self.predication_panel.project_requested.connect(self._on_predication_project)
@@ -348,6 +389,10 @@ class ControlWindow(QMainWindow):
             return act
 
         file_menu = bar.addMenu("Fichier")
+        file_menu.addAction(
+            action("Télécharger les prédications…", self._download_predications)
+        )
+        file_menu.addSeparator()
         file_menu.addAction(action("Quitter", self.close, QKeySequence.Quit))
 
         # « Affichage » : navigation entre les vues. La projection se pilote depuis
@@ -468,6 +513,90 @@ class ControlWindow(QMainWindow):
     def _on_startup_check_done(self, result):
         if result.status == updates.AVAILABLE:
             self.update_banner.show_release(result.release)
+
+    # ---------- Téléchargement des prédications ----------
+    def _download_predications(self):
+        """Téléchargement du corpus depuis branham.fr, après une confirmation
+        explicite rappelant les risques et conséquences."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Télécharger les prédications")
+        box.setText("Télécharger le corpus des prédications depuis branham.fr ?")
+        box.setInformativeText(
+            "Avant de continuer, prenez connaissance des risques et "
+            "conséquences :\n\n"
+            "• Contenu sous copyright (branham.fr / VGR) : réservé à l'usage "
+            "interne de l'église. Ne le rediffusez pas et ne l'incluez jamais "
+            "dans un paquet distribué publiquement.\n\n"
+            "• Environ 1 800 pages seront demandées au site, avec une pause de "
+            "politesse entre chacune : comptez une heure à une heure et demie, "
+            "avec une connexion Internet stable. Évitez de lancer cela pendant "
+            "un culte.\n\n"
+            "• À la fin, le corpus de ce poste sera remplacé par la version "
+            "téléchargée. En cas d'annulation ou d'échec, rien ne change.\n\n"
+            "En continuant, vous confirmez disposer des droits nécessaires "
+            "pour cet usage."
+        )
+        download_btn = box.addButton("Télécharger", QMessageBox.AcceptRole)
+        cancel_btn = box.addButton("Annuler", QMessageBox.RejectRole)
+        box.setDefaultButton(cancel_btn)  # le geste prudent est le choix par défaut
+        box.exec()
+        if box.clickedButton() is not download_btn:
+            return
+
+        progress = QProgressDialog(
+            "Récupération de l'index des prédications…", "Annuler", 0, 0, self
+        )
+        progress.setWindowTitle("Téléchargement des prédications")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setMinimumWidth(480)
+        progress.setValue(0)
+
+        cancelled = {"stop": False}
+        progress.canceled.connect(lambda: cancelled.update(stop=True))
+
+        signals = _DownloadSignals(self)
+
+        def on_progress(i, total, label):
+            progress.setMaximum(total)
+            progress.setValue(i)
+            progress.setLabelText(f"[{i}/{total}]  {label}")
+
+        def on_finished(data):
+            progress.reset()
+            if data is None:  # annulé : rien n'a été conservé
+                QMessageBox.information(
+                    self, "Téléchargement annulé",
+                    "Le téléchargement a été annulé : le corpus du poste n'a "
+                    "pas été modifié.",
+                )
+                return
+            path = predications.save_user_corpus(data)
+            self.predication_panel.reload()
+            self._on_predication_selection()
+            QMessageBox.information(
+                self, "Téléchargement terminé",
+                f"{len(data['predications'])} prédications importées.\n\n"
+                f"Le corpus est conservé dans :\n{path}\n\n"
+                "Rappel : contenu sous copyright, à ne pas rediffuser.",
+            )
+
+        def on_failed(message):
+            progress.reset()
+            QMessageBox.warning(
+                self, "Téléchargement impossible",
+                "Le site branham.fr est injoignable ou sa réponse est "
+                f"illisible ({message}).\n\nLe corpus du poste n'a pas été "
+                "modifié — réessayez plus tard.",
+            )
+
+        signals.progress.connect(on_progress)
+        signals.finished.connect(on_finished)
+        signals.failed.connect(on_failed)
+        QThreadPool.globalInstance().start(
+            _DownloadTask(signals, lambda: cancelled["stop"])
+        )
 
     def _check_updates_manually(self):
         """Vérification demandée depuis le menu : ici, toutes les issues sont

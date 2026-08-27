@@ -192,6 +192,7 @@ class PredicationPanel(QWidget):
     selection_changed = Signal()   # prédication/paragraphe (jeu de diapos) modifié
     project_requested = Signal()   # « Projeter le paragraphe »
     close_requested = Signal()     # retour à l'accueil
+    download_requested = Signal()  # « Télécharger les prédications… » (état vide)
 
     def __init__(self):
         super().__init__()
@@ -523,6 +524,45 @@ class PredicationPanel(QWidget):
             f"color:{theme.COLOR_TEXT_MUTED}; font-size:14px; background:transparent;"
         )
         self.reading_layout.insertWidget(0, message)
+
+        # Ou, si le poste a Internet : téléchargement intégré (la fenêtre de
+        # contrôle demande confirmation — copyright, durée — avant de lancer).
+        self.download_btn = QPushButton("Télécharger les prédications…")
+        self.download_btn.setCursor(Qt.PointingHandCursor)
+        self.download_btn.setStyleSheet(theme.btn_primary_style())
+        self.download_btn.clicked.connect(self.download_requested.emit)
+        self.reading_layout.insertWidget(1, self.download_btn)
+        self._update_status_texts()
+
+    def reload(self):
+        """Recharge entièrement le panneau (après un téléchargement de corpus)."""
+        for flow in (self.alphabet_flow, self.prefix_flow, self.para_flow):
+            clear_layout(flow)
+        clear_layout(self.reading_layout)
+        self.reading_layout.addStretch()
+        clear_layout(self.list_layout)
+        self.list_layout.addStretch()
+        self._letter_cards = {}
+        self._prefix_chips = {}
+        self._pred_rows = {}
+        self._para_rows = {}
+        self._para_buttons = {}
+        self._letter = self._prefix = None
+        self._predication = None
+        self._paragraph = None
+        self._part = 0
+        self._paragraphs = []
+        self._deck_cache = None
+        self.kicker_label.setText("")
+        self.title_label.setText("")
+        self.list_title.setText("")
+        self.list_count.setText("")
+        for widget in (self.search_edit, self.project_btn, self.prev_btn, self.next_btn):
+            widget.setEnabled(True)
+        if predications.is_available():
+            self._load_alphabet()
+        else:
+            self._show_unavailable()
         self._update_status_texts()
 
     # --------------------------- Sélection -------------------------------- #

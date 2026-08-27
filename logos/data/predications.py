@@ -18,6 +18,7 @@ import hashlib
 import json
 import sys
 
+from logos import resources
 from logos.data.database import get_connection, get_meta, set_meta
 from logos.data.textutils import search_key, strip_accents
 from logos.resources import asset_path, bundled_asset_path
@@ -98,6 +99,19 @@ def ensure_imported():
                 "repli sur le corpus livré avec l'application.",
                 file=sys.stderr,
             )
+
+
+def save_user_corpus(data: dict):
+    """Écrit un corpus (téléchargé depuis l'application) dans le dépôt de
+    l'opérateur (`~/.bda/assets/`) puis l'importe immédiatement. Le fichier
+    déposé étant prioritaire sur l'asset livré, il survivra aux mises à jour
+    de l'application. Retourne le chemin écrit."""
+    resources.ensure_user_dirs()
+    target = resources.USER_ASSETS_DIR / ASSET_NAME
+    with gzip.open(target, "wt", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    _import_asset(target)
+    return target
 
 
 def import_data(data: dict):

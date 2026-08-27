@@ -30,7 +30,7 @@ def fake_manifest(monkeypatch):
     """Fait répondre `urlopen` avec le contenu donné (bytes ou exception)."""
 
     def install(payload):
-        def fake_urlopen(url, timeout=None):
+        def fake_urlopen(url, timeout=None, context=None):
             if isinstance(payload, Exception):
                 raise payload
             raw = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
