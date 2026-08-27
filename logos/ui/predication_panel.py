@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
 )
 
+from logos import resources
 from logos.data import predications, slides
 from logos.ui import theme
 from logos.ui.widgets import (
@@ -506,10 +507,16 @@ class PredicationPanel(QWidget):
         self.entries_label.setText("0 entrée")
         for widget in (self.search_edit, self.project_btn, self.prev_btn, self.next_btn):
             widget.setEnabled(False)
+        # Message orienté opérateur : sur un poste installé (paquet public sans
+        # corpus, pour cause de copyright), le geste attendu est le dépôt du
+        # fichier dans le dossier utilisateur — pas le script de développeur.
         message = QLabel(
-            "Prédications non disponibles. Lancez le script d'import "
-            "(scripts/scrape_predications.py) pour générer "
-            "logos/assets/predications.json.gz."
+            "Prédications non disponibles sur ce poste.\n\n"
+            "Déposez le fichier « predications.json.gz » (fourni par le "
+            "responsable) dans le dossier :\n"
+            f"{resources.USER_ASSETS_DIR}\n\n"
+            "puis relancez l'application : le corpus sera importé "
+            "automatiquement."
         )
         message.setWordWrap(True)
         message.setStyleSheet(
