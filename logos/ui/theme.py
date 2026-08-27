@@ -38,6 +38,22 @@ COLOR_SUCCESS = "#4E8C5A"         # état positif (écran détecté)
 COLOR_WARNING = "#D89A3C"         # avertissement (un autre mode est à l'antenne)
 COLOR_LIVE = "#79C77B"            # indicateur « en direct » (projection active)
 
+# ---------- Grille des livres bibliques ----------
+# Une couleur par groupe canonique (clés de logos/data/bible.py :: book_group),
+# déclinées pour rester lisibles sur le thème sombre.
+BOOK_GROUP_COLORS = {
+    "pentateuque": "#6B4A2B",     # brun
+    "historiques": "#A87424",     # orange
+    "poetiques": "#9C3A2E",       # rouge brique
+    "prophetes": "#74497F",       # violet
+    "evangiles": "#3E5C9A",       # bleu
+    "actes": "#2E7F8A",           # cyan
+    "epitres": "#2E7A4E",         # vert
+    "apocalypse": "#748F2F",      # vert clair
+}
+COLOR_TEXT_ON_GROUP = "#F7F2E7"           # abréviation sur carte colorée
+COLOR_TEXT_ON_GROUP_MUTED = "rgba(255, 255, 255, 0.72)"  # nom du livre
+
 # Police à empattement pour la lecture du texte biblique (rappel « imprimé »).
 READING_FONT_FAMILY = "Georgia, 'Times New Roman', 'Noto Serif', serif"
 

@@ -14,7 +14,7 @@ expose `current_deck()`. Les petits widgets génériques (disposition en flux,
 logo rond, cases numérotées, lignes de lecture) viennent de `widgets`, les
 styles de boutons de `theme`.
 """
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QWidget,
     QFrame,
@@ -50,13 +50,15 @@ class _LetterCard(QFrame):
         self.letter = letter
         self._count = count
         self._enabled = count > 0
-        self.setFixedSize(84, 74)
+        # Case compacte : l'alphabet doit rester un bandeau, l'espace vertical
+        # revient à la liste des prédications et à la grille des paragraphes.
+        self.setFixedSize(56, 50)
         if self._enabled:
             self.setCursor(Qt.PointingHandCursor)
 
         col = QVBoxLayout(self)
-        col.setContentsMargins(6, 10, 6, 8)
-        col.setSpacing(2)
+        col.setContentsMargins(4, 5, 4, 5)
+        col.setSpacing(1)
         self.letter_label = QLabel(letter)
         self.letter_label.setAlignment(Qt.AlignCenter)
         self.count_label = QLabel(str(count))
@@ -80,10 +82,10 @@ class _LetterCard(QFrame):
             f"_LetterCard {{ background:{bg}; border:1px solid {border}; border-radius:8px; }}"
         )
         self.letter_label.setStyleSheet(
-            f"color:{letter_c}; font-size:20px; font-weight:700; background:transparent; border:none;"
+            f"color:{letter_c}; font-size:15px; font-weight:700; background:transparent; border:none;"
         )
         self.count_label.setStyleSheet(
-            f"color:{count_c}; font-size:10px; font-weight:600; background:transparent; border:none;"
+            f"color:{count_c}; font-size:9px; font-weight:600; background:transparent; border:none;"
         )
 
     def mousePressEvent(self, event):
@@ -138,8 +140,12 @@ class _PredicationRow(QFrame):
         self.code_label.setFixedWidth(64)
         titles = QVBoxLayout()
         titles.setSpacing(1)
+        # Retour à la ligne : un titre long ne doit pas élargir la liste (et
+        # déclencher un défilement horizontal), il s'écrit sur deux lignes.
         self.title_label = QLabel(row["title_fr"])
+        self.title_label.setWordWrap(True)
         self.subtitle_label = QLabel(row["title_en"])
+        self.subtitle_label.setWordWrap(True)
         titles.addWidget(self.title_label)
         titles.addWidget(self.subtitle_label)
         layout.addWidget(self.code_label)
@@ -263,17 +269,27 @@ class PredicationPanel(QWidget):
         search_row.setContentsMargins(12, 4, 12, 4)
         search_row.setSpacing(8)
         glass = QLabel("⌕")
-        glass.setStyleSheet(f"color:{theme.BRONZE}; background:transparent; font-size:13px;")
+        glass.setStyleSheet(
+            f"color:{theme.BRONZE}; background:transparent; border:none; font-size:13px;"
+        )
         search_row.addWidget(glass)
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Rechercher une prédication…")
-        self.search_edit.setFixedWidth(220)
+        self.search_edit.setPlaceholderText("Titre ou code date (ex. 62-0123)…")
+        self.search_edit.setFixedWidth(240)
+        self.search_edit.setClearButtonEnabled(True)
         self.search_edit.setStyleSheet(
             f"background:transparent; border:none; color:{theme.COLOR_TEXT}; font-size:13px;"
         )
         self.search_edit.textChanged.connect(self._on_search)
         search_row.addWidget(self.search_edit)
         row.addWidget(search_box)
+
+        # Anti-rebond : la recherche part 300 ms après la dernière frappe (la
+        # liste n'est pas reconstruite à chaque caractère).
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(300)
+        self._search_timer.timeout.connect(self._run_search)
 
         row.addStretch()
 
@@ -360,30 +376,24 @@ class PredicationPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # --- Alphabet (haut) ---
+        # --- Alphabet (haut) : bandeau compact à hauteur naturelle (la FlowHost
+        # déclare sa hauteur), sans défilement — 26 lettres = 2-3 rangées.
         alpha_wrap = QWidget()
         alpha_col = QVBoxLayout(alpha_wrap)
-        alpha_col.setContentsMargins(22, 18, 22, 14)
+        alpha_col.setContentsMargins(22, 16, 22, 12)
         alpha_col.setSpacing(10)
         alpha_col.addWidget(_section_title("Alphabet"))
-
-        alpha_scroll = QScrollArea()
-        alpha_scroll.setWidgetResizable(True)
-        alpha_scroll.setFrameShape(QFrame.NoFrame)
-        alpha_scroll.setStyleSheet("background:transparent; border:none;")
-        self.alphabet_host = FlowHost(spacing=8)
+        self.alphabet_host = FlowHost(spacing=6)
         self.alphabet_flow = self.alphabet_host.flow
-        alpha_scroll.setWidget(self.alphabet_host)
-        alpha_col.addWidget(alpha_scroll, 1)
-        layout.addWidget(alpha_wrap, 1)
+        alpha_col.addWidget(self.alphabet_host)
+        layout.addWidget(alpha_wrap)
 
-        # --- Prédications + paragraphes (bas) ---
+        # --- Prédications + paragraphes : tout l'espace vertical restant ---
         bottom = QFrame()
         bottom.setStyleSheet(
             f"background:{theme.COLOR_SURFACE_SUNKEN};"
             f" border-top:1px solid {theme.COLOR_SURFACE_ALT};"
         )
-        bottom.setMaximumHeight(300)
         bottom_row = QHBoxLayout(bottom)
         bottom_row.setContentsMargins(0, 0, 0, 0)
         bottom_row.setSpacing(0)
@@ -422,6 +432,7 @@ class PredicationPanel(QWidget):
         list_scroll = QScrollArea()
         list_scroll.setWidgetResizable(True)
         list_scroll.setFrameShape(QFrame.NoFrame)
+        list_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         list_scroll.setStyleSheet("background:transparent; border:none;")
         self.list_host = QWidget()
         self.list_host.setStyleSheet("background:transparent;")
@@ -454,7 +465,7 @@ class PredicationPanel(QWidget):
         para_col.addWidget(para_scroll, 1)
         bottom_row.addWidget(para_wrap, 2)
 
-        layout.addWidget(bottom)
+        layout.addWidget(bottom, 1)
         return col
 
     def _build_statusbar(self):
@@ -631,14 +642,20 @@ class PredicationPanel(QWidget):
 
     # --------------------------- Recherche -------------------------------- #
     def _on_search(self, text):
-        query = text.strip()
-        if not query:
+        if not text.strip():
+            # Effacement : retour immédiat à la liste du préfixe courant.
+            self._search_timer.stop()
             if self._prefix is not None:
                 self._populate_list(
                     predications.list_by_prefix(self._prefix), header=self._prefix
                 )
             return
-        self._populate_list(predications.search(query), header=f"« {query} »")
+        self._search_timer.start()
+
+    def _run_search(self):
+        query = self.search_edit.text().strip()
+        if query:
+            self._populate_list(predications.search(query), header=f"« {query} »")
 
     # ----------------------------- Statut --------------------------------- #
     def _update_status_texts(self):

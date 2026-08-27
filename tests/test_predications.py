@@ -89,6 +89,13 @@ def test_liste_paragraphes_recherche():
     assert [p["text"] for p in predications.get_paragraphs(pid)] == ["Un.", "Deux.", "Trois."]
     found = predications.search("postérité")
     assert [r["title_fr"] for r in found] == ["Abraham et sa postérité"]
+    # Accents et casse ignorés, recherche par code date et par titre anglais.
+    assert [r["title_fr"] for r in predications.search("POSTERITE")] == \
+        ["Abraham et sa postérité"]
+    assert [r["title_fr"] for r in predications.search("61-0212")] == \
+        ["Abraham et sa postérité"]
+    assert [r["title_fr"] for r in predications.search("elijah")] == ["Élie"]
+    assert predications.search("") == []
 
 
 # ---------------------- Parseurs du script d'import -------------------- #

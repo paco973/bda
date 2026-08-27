@@ -2,7 +2,7 @@
 Navigateur biblique (fenêtre dédiée), fidèle à la maquette « Bible Navigator ».
 
 Disposition :
-  - barre supérieure : retour, logo, titre, recherche de livre, bascule LSG/KJV ;
+  - barre supérieure : retour, logo, titre, recherches (référence, texte), badge LSG ;
   - colonne de lecture (gauche) : testament, référence, versets cliquables, actions ;
   - grille des livres (haut-droite) puis grilles chapitres / versets (bas-droite) ;
   - barre de statut (traduction · référence à gauche, versets sélectionnés à droite).
@@ -10,13 +10,16 @@ Disposition :
 Aucune logique de projection ici : le panneau émet des signaux vers la fenêtre
 de contrôle, qui reste seule maîtresse de la fenêtre de projection.
 """
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QWidget,
+    QCompleter,
     QFrame,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QVBoxLayout,
     QHBoxLayout,
@@ -79,10 +82,15 @@ class _BookCard(QFrame):
         self.set_active(False)
 
     def set_active(self, active: bool):
-        abbr = theme.COLOR_TEXT_ON_PRIMARY if active else theme.COLOR_TEXT
-        name = theme.COLOR_ON_PRIMARY_MUTED if active else theme.BRONZE
-        bg = theme.COLOR_PRIMARY if active else theme.COLOR_SURFACE_ALT
-        border = theme.COLOR_PRIMARY if active else theme.COLOR_BORDER_SUBTLE
+        # Couleur du groupe canonique (Pentateuque, Épîtres…) ; la sélection
+        # garde l'accent doré de l'application.
+        group_color = theme.BOOK_GROUP_COLORS[bible.book_group(self.book_id)]
+        if active:
+            abbr, name = theme.COLOR_TEXT_ON_PRIMARY, theme.COLOR_ON_PRIMARY_MUTED
+            bg = border = theme.COLOR_PRIMARY
+        else:
+            abbr, name = theme.COLOR_TEXT_ON_GROUP, theme.COLOR_TEXT_ON_GROUP_MUTED
+            bg = border = group_color
         self.setStyleSheet(
             f"_BookCard {{ background:{bg}; border:1px solid {border}; border-radius:6px; }}"
         )
@@ -116,6 +124,7 @@ class BiblePanel(QWidget):
         self._book = None           # livre sélectionné
         self._chapter = 1
         self._verse = None          # verset sélectionné (int) ou None
+        self._partial_start = 0     # position de départ dans le verset sélectionné
         self._chapter_verses = []   # (verse, text) du chapitre courant
         self._book_cards = {}       # id -> _BookCard
         self._verses_per_slide = 1  # nombre MAX de versets regroupés par diapositive
@@ -183,43 +192,88 @@ class BiblePanel(QWidget):
         search_row.setContentsMargins(12, 4, 12, 4)
         search_row.setSpacing(8)
         glass = QLabel("⌕")
-        glass.setStyleSheet(f"color:{theme.BRONZE}; background:transparent; font-size:13px;")
+        glass.setStyleSheet(
+            f"color:{theme.BRONZE}; background:transparent; border:none; font-size:13px;"
+        )
         search_row.addWidget(glass)
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Rechercher un livre…")
-        self.search_edit.setFixedWidth(220)
+        self.search_edit.setPlaceholderText("Livre ou référence (ex. Jean 3:16)…")
+        self.search_edit.setFixedWidth(240)
+        self.search_edit.setClearButtonEnabled(True)
         self.search_edit.setStyleSheet(
             f"background:transparent; border:none; color:{theme.COLOR_TEXT}; font-size:13px;"
         )
         self.search_edit.textChanged.connect(self._on_search)
+        self.search_edit.returnPressed.connect(self._on_search_return)
         search_row.addWidget(self.search_edit)
+
+        # Confirmation en direct de la référence reconnue (« → Jean 3:16 »).
+        self.search_hint = QLabel("")
+        self.search_hint.setStyleSheet(
+            f"color:{theme.COLOR_PRIMARY}; font-size:12px; font-weight:700;"
+            f" background:transparent; border:none;"
+        )
+        search_row.addWidget(self.search_hint)
         row.addWidget(search_box)
+
+        # Recherche plein texte dans les versets (« tant aimé le monde »).
+        verse_box = QFrame()
+        verse_box.setStyleSheet(
+            f"background:{theme.COLOR_SURFACE_ALT}; border:1px solid {theme.COLOR_BORDER};"
+            f" border-radius:6px;"
+        )
+        verse_row = QHBoxLayout(verse_box)
+        verse_row.setContentsMargins(12, 4, 12, 4)
+        verse_row.setSpacing(8)
+        pilcrow = QLabel("¶")
+        pilcrow.setStyleSheet(
+            f"color:{theme.BRONZE}; background:transparent; border:none; font-size:13px;"
+        )
+        verse_row.addWidget(pilcrow)
+        self.verse_search_edit = QLineEdit()
+        self.verse_search_edit.setPlaceholderText("Rechercher dans le texte…")
+        self.verse_search_edit.setFixedWidth(200)
+        self.verse_search_edit.setClearButtonEnabled(True)
+        self.verse_search_edit.setStyleSheet(
+            f"background:transparent; border:none; color:{theme.COLOR_TEXT}; font-size:13px;"
+        )
+        self.verse_search_edit.textChanged.connect(self._on_verse_search_text)
+        self.verse_search_edit.returnPressed.connect(self._on_verse_search_return)
+        verse_row.addWidget(self.verse_search_edit)
+        row.addWidget(verse_box)
+        self._verse_search_box = verse_box
+
+        # Liste flottante des versets trouvés, ancrée sous le champ.
+        self.verse_results = QListWidget(self)
+        self.verse_results.setVisible(False)
+        self.verse_results.setWordWrap(False)
+        self.verse_results.setTextElideMode(Qt.ElideRight)
+        self.verse_results.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.verse_results.setStyleSheet(
+            f"QListWidget {{ background:{theme.COLOR_SURFACE_ALT}; color:{theme.COLOR_TEXT};"
+            f" border:1px solid {theme.COLOR_BORDER}; border-radius:6px; font-size:13px; }}"
+            f"QListWidget::item {{ padding:6px 10px; }}"
+            f"QListWidget::item:selected, QListWidget::item:hover"
+            f" {{ background:{theme.COLOR_PRIMARY}; color:{theme.COLOR_TEXT_ON_PRIMARY}; }}"
+        )
+        self.verse_results.itemClicked.connect(self._on_verse_result_clicked)
+
+        # Anti-rebond : la recherche part 300 ms après la dernière frappe.
+        self._verse_search_timer = QTimer(self)
+        self._verse_search_timer.setSingleShot(True)
+        self._verse_search_timer.setInterval(300)
+        self._verse_search_timer.timeout.connect(self._run_verse_search)
 
         row.addStretch()
 
-        # Bascule LSG / KJV (seule la LSG est embarquée).
-        toggle = QFrame()
-        toggle.setStyleSheet(
-            f"background:{theme.COLOR_SURFACE_ALT}; border:1px solid {theme.COLOR_BORDER_SUBTLE};"
-            f" border-radius:6px;"
-        )
-        toggle_row = QHBoxLayout(toggle)
-        toggle_row.setContentsMargins(0, 0, 0, 0)
-        toggle_row.setSpacing(0)
+        # Badge de la traduction embarquée (LSG).
         lsg = QLabel(f"  {bible.TRANSLATION_CODE}  ")
+        lsg.setToolTip(bible.TRANSLATION)
         lsg.setStyleSheet(
             f"color:{theme.COLOR_TEXT_ON_PRIMARY}; background:{theme.COLOR_PRIMARY};"
             f" font-size:12px; font-weight:700; padding:6px 4px; border-radius:5px;"
         )
-        kjv = QLabel("  KJV  ")
-        kjv.setToolTip("Version indisponible (application hors ligne, LSG uniquement).")
-        kjv.setStyleSheet(
-            f"color:{theme.BRONZE}; background:transparent; font-size:12px;"
-            f" font-weight:600; padding:6px 4px;"
-        )
-        toggle_row.addWidget(lsg)
-        toggle_row.addWidget(kjv)
-        row.addWidget(toggle)
+        row.addWidget(lsg)
         return bar
 
     def _build_reading_column(self):
@@ -422,12 +476,28 @@ class BiblePanel(QWidget):
             self._book_cards[book["id"]] = card
             self.books_flow.addWidget(card)
 
+        # Autocomplétion des noms de livres dans la barre de recherche.
+        completer = QCompleter([b["name"] for b in self._books], self.search_edit)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchContains)
+        completer.popup().setStyleSheet(
+            f"background:{theme.COLOR_SURFACE_ALT}; color:{theme.COLOR_TEXT};"
+            f" border:1px solid {theme.COLOR_BORDER};"
+            f" selection-background-color:{theme.COLOR_PRIMARY};"
+            f" selection-color:{theme.COLOR_TEXT_ON_PRIMARY};"
+        )
+        self.search_edit.setCompleter(completer)
+
         # Livre par défaut : Actes (comme la maquette), sinon le premier.
         default = next((b for b in self._books if b["id"] == 44), self._books[0])
         self._select_book(default["id"])
 
+        # Précharge le cache de la recherche plein texte hors du chemin critique
+        # (sinon la première recherche marquerait une pause de ~300 ms).
+        QTimer.singleShot(500, bible.warm_search_cache)
+
     def _show_unavailable(self):
-        for widget in (self.project_btn, self.search_edit):
+        for widget in (self.project_btn, self.search_edit, self.verse_search_edit):
             widget.setEnabled(False)
         message = QLabel(
             "Bible non disponible : fichier logos/assets/bible_ls1910.json.gz "
@@ -486,6 +556,7 @@ class BiblePanel(QWidget):
         for verse, text in verses:
             row = NumberedTextRow(verse, text)
             row.clicked.connect(self._select_verse)
+            row.partial_selected.connect(self._on_partial_selected)
             self._verse_rows[verse] = row
             self.reading_layout.addWidget(row)
         self.reading_layout.addStretch()
@@ -519,6 +590,13 @@ class BiblePanel(QWidget):
         index = max(0, min(index, len(groups) - 1))
         self._select_verse(groups[index][0][0])
 
+    def _verse_display_text(self, verse, text) -> str:
+        """Texte projetable d'un verset : tronqué au début de la sélection à la
+        souris (« … la seconde moitié ») si elle porte sur le verset sélectionné."""
+        if verse == self._verse and self._partial_start > 0:
+            return "…" + text[self._partial_start:].lstrip()
+        return text
+
     def _render_group(self, group) -> str:
         """Texte projetable d'un groupe de versets (texte + référence de plage).
 
@@ -527,9 +605,12 @@ class BiblePanel(QWidget):
         distinguer ; un verset seul reste sans numéro (la référence sous le texte
         suffit à l'identifier)."""
         if len(group) > 1:
-            block = "\n\n".join(f"{_superscript(v)} {text}" for v, text in group)
+            block = "\n\n".join(
+                f"{_superscript(v)} {self._verse_display_text(v, text)}"
+                for v, text in group
+            )
         else:
-            block = group[0][1]
+            block = self._verse_display_text(group[0][0], group[0][1])
         ref = slides.passage_label(
             self._book["name"], self._chapter, group[0][0], group[-1][0]
         )
@@ -583,6 +664,8 @@ class BiblePanel(QWidget):
         return [v for v, _t in self._group_from(pos, len(verses))]
 
     def _select_verse(self, verse):
+        if verse != self._verse:
+            self._partial_start = 0  # la sélection partielle suit son verset
         self._verse = verse
         group = set(self._group_verses(verse))
         for v, row in getattr(self, "_verse_rows", {}).items():
@@ -596,6 +679,18 @@ class BiblePanel(QWidget):
             self.reading_area.ensureWidgetVisible(row)
         self._update_status_texts()
         self.selection_changed.emit()
+
+    def _on_partial_selected(self, verse, offset):
+        """Sélection à la souris dans un verset : la projection démarre à la
+        sélection (offset -1 = pas de sélection -> verset complet)."""
+        if verse != self._verse:
+            return
+        partial = max(0, offset) if offset >= 0 else 0
+        if partial == self._partial_start:
+            return
+        self._partial_start = partial
+        self._update_status_texts()
+        self.selection_changed.emit()  # recharge l'aperçu (et le direct si à l'antenne)
 
     def _on_verses_per_slide_changed(self, value: int):
         self._verses_per_slide = max(1, value)
@@ -620,11 +715,11 @@ class BiblePanel(QWidget):
         query = text.strip()
         # Référence directe (« Jean 3:16 », « 1 co 13 ») : saute au passage dès
         # qu'un chapitre est saisi, sans filtrer la grille pendant la frappe.
-        if self._books:
-            ref = bible.parse_reference(query)
-            if ref is not None and ref[1] is not None:
-                self._jump_to_reference(*ref)
-                return
+        ref = bible.parse_reference(query) if self._books else None
+        self._update_search_hint(query, ref)
+        if ref is not None and ref[1] is not None:
+            self._jump_to_reference(*ref)
+            return
         query = query.lower()
         for book in self._books:
             match = (
@@ -633,6 +728,103 @@ class BiblePanel(QWidget):
                 or query in bible.book_abbreviation(book["id"]).lower()
             )
             self._book_cards[book["id"]].set_dimmed(not match)
+
+    def _update_search_hint(self, query, ref):
+        """Affiche la cible reconnue à côté de la saisie (« → Jean 3:16 »)."""
+        book = self._find_book(ref[0]) if ref is not None else None
+        if not query or book is None:
+            self.search_hint.setText("")
+            return
+        target = book["name"]
+        if ref[1] is not None:
+            target += f" {max(1, min(ref[1], book['chapters']))}"
+            if ref[2] is not None:
+                target += f":{ref[2]}"
+        self.search_hint.setText(f"→ {target}")
+
+    def _on_search_return(self):
+        """Entrée : saute à la référence reconnue (livre seul inclus) et efface."""
+        ref = bible.parse_reference(self.search_edit.text().strip()) if self._books else None
+        if ref is None:
+            return
+        book_id, chapter, verse = ref
+        if chapter is None:
+            self._select_book(book_id)
+        else:
+            self._jump_to_reference(book_id, chapter, verse)
+        self.search_edit.clear()  # réaffiche tous les livres et vide l'indication
+
+    # ---------------------- Recherche dans les versets --------------------- #
+    def _on_verse_search_text(self, text):
+        if len(text.strip()) < 3:  # même seuil que bible.search_verses
+            self._verse_search_timer.stop()
+            self.verse_results.hide()
+            return
+        self._verse_search_timer.start()
+
+    def _run_verse_search(self):
+        query = self.verse_search_edit.text().strip()
+        if len(query) < 3 or not self._books:
+            self.verse_results.hide()
+            return
+        results = bible.search_verses(query)
+        self.verse_results.clear()
+        if not results:
+            empty = QListWidgetItem("Aucun verset trouvé")
+            empty.setFlags(Qt.NoItemFlags)
+            self.verse_results.addItem(empty)
+        for row in results:
+            book = self._find_book(row["book_id"])
+            reference = f"{book['name'] if book else '?'} {row['chapter']}:{row['verse']}"
+            text = row["text"]
+            if len(text) > 90:
+                text = text[:90].rstrip() + "…"
+            item = QListWidgetItem(f"{reference} — {text}")
+            item.setData(Qt.UserRole, (row["book_id"], row["chapter"], row["verse"]))
+            self.verse_results.addItem(item)
+        self._place_verse_results()
+        self.verse_results.show()
+        self.verse_results.raise_()
+
+    def _place_verse_results(self):
+        """Ancre la liste de résultats sous le champ de recherche plein texte."""
+        anchor = self._verse_search_box.mapTo(
+            self, self._verse_search_box.rect().bottomLeft()
+        )
+        row_height = self.verse_results.sizeHintForRow(0)
+        height = min(360, self.verse_results.count() * max(row_height, 24) + 8)
+        width = min(640, max(420, self.width() - anchor.x() - 24))
+        self.verse_results.setGeometry(anchor.x(), anchor.y() + 6, width, height)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.verse_results.isVisible():
+            self._place_verse_results()
+
+    def keyPressEvent(self, event):
+        # Échap referme la liste de résultats (la touche remonte depuis le champ).
+        if event.key() == Qt.Key_Escape and self.verse_results.isVisible():
+            self.verse_results.hide()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _on_verse_result_clicked(self, item):
+        target = item.data(Qt.UserRole)
+        if target:
+            self.verse_results.hide()
+            self._jump_to_reference(*target)
+
+    def _on_verse_search_return(self):
+        """Entrée : saute au premier verset trouvé."""
+        self._verse_search_timer.stop()
+        self._run_verse_search()
+        for i in range(self.verse_results.count()):
+            target = self.verse_results.item(i).data(Qt.UserRole)
+            if target:
+                self.verse_results.hide()
+                self._jump_to_reference(*target)
+                return
 
     def _jump_to_reference(self, book_id, chapter, verse):
         """Navigue vers la référence (bornée aux chapitres/versets existants)."""
@@ -664,11 +856,12 @@ class BiblePanel(QWidget):
         if self._verse:
             group = self._group_verses(self._verse)
             if len(group) > 1:
-                self.status_right.setText(
-                    f"Versets {group[0]}-{group[-1]} sélectionnés"
-                )
+                status = f"Versets {group[0]}-{group[-1]} sélectionnés"
             else:
-                self.status_right.setText(f"Verset {self._verse} sélectionné")
+                status = f"Verset {self._verse} sélectionné"
+            if self._partial_start > 0:
+                status += " · projeté à partir de la sélection"
+            self.status_right.setText(status)
         else:
             self.status_right.setText("Sélectionnez un verset")
 

@@ -108,17 +108,19 @@ class NumButton(QPushButton):
         self.set_active(False)
 
     def set_active(self, active: bool):
+        # padding:0 est indispensable : le padding QPushButton de la QSS globale
+        # (8px 14px) rognerait sinon les nombres à 2-3 chiffres dans la case fixe.
         if active:
             self.setStyleSheet(
                 f"QPushButton {{ background:{theme.COLOR_PRIMARY};"
-                f" color:{theme.COLOR_TEXT_ON_PRIMARY};"
+                f" color:{theme.COLOR_TEXT_ON_PRIMARY}; padding:0;"
                 f" border:1px solid {theme.COLOR_PRIMARY}; border-radius:5px;"
                 f" font-size:13px; font-weight:700; }}"
             )
         else:
             self.setStyleSheet(
                 f"QPushButton {{ background:{theme.COLOR_SURFACE_ALT};"
-                f" color:{theme.COLOR_TEXT_MUTED};"
+                f" color:{theme.COLOR_TEXT_MUTED}; padding:0;"
                 f" border:1px solid {theme.COLOR_BORDER_SUBTLE}; border-radius:5px;"
                 f" font-size:13px; font-weight:600; }}"
                 f" QPushButton:hover {{ border-color:{theme.COLOR_PRIMARY};"
@@ -128,20 +130,31 @@ class NumButton(QPushButton):
 
 class NumberedTextRow(QLabel):
     """Ligne de texte numérotée de la colonne de lecture (verset, paragraphe…) :
-    numéro en exposant, clic pour sélectionner, surlignage quand active."""
+    numéro en exposant, clic pour sélectionner, surlignage quand active.
+
+    Le texte est sélectionnable à la souris : au relâchement, `partial_selected`
+    transmet la position (dans le texte brut) du début de la sélection, ou -1
+    s'il n'y a pas de sélection — le panneau peut s'en servir pour démarrer la
+    projection au milieu du texte."""
 
     clicked = Signal(int)
+    partial_selected = Signal(int, int)   # (numéro, position de début, ou -1)
 
     def __init__(self, number: int, text: str):
         super().__init__()
         self.number = number
         self.setWordWrap(True)
         self.setTextFormat(Qt.RichText)
+        self.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.setCursor(Qt.PointingHandCursor)
         self._text = text
+        self._active = None
         self.set_active(False)
 
     def set_active(self, active: bool):
+        if active == self._active:
+            return  # setText effacerait une sélection à la souris en cours
+        self._active = active
         num_color = theme.COLOR_ON_PRIMARY_MUTED if active else theme.BRONZE
         text_color = theme.COLOR_TEXT_ON_PRIMARY if active else theme.COLOR_TEXT
         bg = theme.COLOR_PRIMARY if active else "transparent"
@@ -156,7 +169,17 @@ class NumberedTextRow(QLabel):
         )
 
     def mousePressEvent(self, event):
+        super().mousePressEvent(event)  # laisse la sélection de texte démarrer
         self.clicked.emit(self.number)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        offset = -1
+        start = self.selectionStart()
+        if start >= 0 and self.selectedText().strip():
+            # Le texte affiché est précédé du numéro en exposant et d'une espace.
+            offset = max(0, start - len(str(self.number)) - 1)
+        self.partial_selected.emit(self.number, offset)
 
 
 def circular_logo(size: int):

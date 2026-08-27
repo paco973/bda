@@ -72,6 +72,23 @@ def test_label_et_texte_projetable():
     assert parts[1].startswith("La terre était informe")
 
 
+def test_groupes_canoniques():
+    assert bible.book_group(1) == "pentateuque"      # Genèse
+    assert bible.book_group(5) == "pentateuque"      # Deutéronome
+    assert bible.book_group(6) == "historiques"      # Josué
+    assert bible.book_group(17) == "historiques"     # Esther
+    assert bible.book_group(18) == "poetiques"       # Job
+    assert bible.book_group(23) == "prophetes"       # Ésaïe
+    assert bible.book_group(40) == "evangiles"       # Matthieu
+    assert bible.book_group(44) == "actes"
+    assert bible.book_group(45) == "epitres"         # Romains
+    assert bible.book_group(66) == "apocalypse"
+    # Chaque groupe a sa couleur dans le thème.
+    from logos.ui import theme
+    for book_id in range(1, 67):
+        assert bible.book_group(book_id) in theme.BOOK_GROUP_COLORS
+
+
 def test_parse_reference():
     bible.import_data(SAMPLE)
     assert bible.parse_reference("Jean 3:16") == (43, 3, 16)
@@ -96,6 +113,25 @@ def test_split_to_fit():
     assert slides.split_to_fit("incompressible", lambda t: len(t) <= 3) == ["incompressible"]
 
 
+def test_search_verses():
+    bible.import_data(SAMPLE)
+    # Accents et casse ignorés.
+    rows = bible.search_verses("DIEU CREA")
+    assert [(r["book_id"], r["chapter"], r["verse"]) for r in rows] == [(1, 1, 1)]
+    assert "créa" in rows[0]["text"]
+    # Moins de 3 caractères : pas de résultat (trop de bruit).
+    assert bible.search_verses("au") == []
+    # Limite respectée.
+    assert len(bible.search_verses("informe", limit=1)) == 1
+    # Le cache est invalidé quand le corpus est réimporté.
+    modified = {"books": [dict(SAMPLE["books"][0], chapters=[
+        {"chapter": 1, "verses": [{"verse": 1, "text": "Texte remplacé."}]},
+    ])]}
+    bible.import_data(modified)
+    assert bible.search_verses("dieu crea") == []
+    assert len(bible.search_verses("remplace")) == 1
+
+
 def test_bible_embarquee_complete():
     """L'asset livré avec l'application contient bien les 66 livres."""
     assert bible.BIBLE_ASSET.exists()
@@ -104,3 +140,8 @@ def test_bible_embarquee_complete():
     assert len(books) == 66
     jean_316 = bible.get_passage(43, 3, 16, 16)
     assert "Dieu a tant aimé le monde" in jean_316[0]["text"]
+    # L'apostrophe clavier « ' » doit trouver l'apostrophe typographique « ’ »
+    # employée par le texte (et réciproquement).
+    ascii_rows = bible.search_verses("l'eternel dit")
+    typo_rows = bible.search_verses("l’eternel dit")
+    assert ascii_rows and ascii_rows == typo_rows

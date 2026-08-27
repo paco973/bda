@@ -13,7 +13,7 @@ import re
 import sys
 
 from logos.data.database import get_connection, get_meta, set_meta
-from logos.data.textutils import strip_accents
+from logos.data.textutils import search_key, strip_accents
 from logos.resources import asset_path, bundled_asset_path
 
 ASSET_NAME = "bible_ls1910.json.gz"
@@ -52,6 +52,28 @@ def book_abbreviation(book_id: int) -> str:
 def testament(book_id: int) -> str:
     """« Ancien Testament » (livres 1 à 39) ou « Nouveau Testament » (40 à 66)."""
     return "Ancien Testament" if book_id <= OLD_TESTAMENT_COUNT else "Nouveau Testament"
+
+
+# Groupes canoniques des livres : (dernier id du groupe, clé du groupe).
+# Sert au code couleur de la grille des livres (couleurs dans logos/ui/theme.py).
+_BOOK_GROUPS = (
+    (5, "pentateuque"),     # Genèse -> Deutéronome
+    (17, "historiques"),    # Josué -> Esther
+    (22, "poetiques"),      # Job -> Cantique des cantiques
+    (39, "prophetes"),      # Ésaïe -> Malachie
+    (43, "evangiles"),      # Matthieu -> Jean
+    (44, "actes"),          # Actes
+    (65, "epitres"),        # Romains -> Jude
+    (66, "apocalypse"),     # Apocalypse
+)
+
+
+def book_group(book_id: int) -> str:
+    """Clé du groupe canonique d'un livre (« pentateuque », « epitres », …)."""
+    for last_id, group in _BOOK_GROUPS:
+        if book_id <= last_id:
+            return group
+    return "apocalypse"
 
 
 # « Jean 3:16 », « jean 3 16 », « 1 co 13 »… : livre (éventuellement précédé
@@ -157,6 +179,8 @@ def ensure_imported():
 
 def import_data(data: dict):
     """Remplit les tables bible_* depuis le format {books: [{nr, name, chapters}]}."""
+    global _search_cache
+    _search_cache = None  # le corpus change : le cache de recherche est périmé
     conn = get_connection()
     conn.execute("DELETE FROM bible_verses")
     conn.execute("DELETE FROM bible_books")
@@ -204,6 +228,54 @@ def get_chapter(book_id: int, chapter: int):
     ).fetchall()
     conn.close()
     return rows
+
+
+# Versets normalisés, chargés en mémoire à la première recherche (normaliser
+# les ~31 000 versets à chaque requête coûterait ~300 ms ; ainsi la recherche
+# reste instantanée). Invalidé par import_data().
+_search_cache = None
+
+
+def _search_rows():
+    global _search_cache
+    if _search_cache is None:
+        conn = get_connection()
+        rows = conn.execute(
+            "SELECT book_id, chapter, verse, text FROM bible_verses"
+            " ORDER BY book_id, chapter, verse"
+        ).fetchall()
+        conn.close()
+        _search_cache = [
+            (r["book_id"], r["chapter"], r["verse"], r["text"], search_key(r["text"]))
+            for r in rows
+        ]
+    return _search_cache
+
+
+def warm_search_cache():
+    """Précharge le cache de recherche (~300 ms) — à appeler au lancement,
+    hors du chemin critique, pour que la première recherche soit instantanée."""
+    _search_rows()
+
+
+def search_verses(query: str, limit: int = 50):
+    """Versets dont le texte contient `query` (accents et casse ignorés).
+
+    Retourne au plus `limit` dicts {book_id, chapter, verse, text} dans
+    l'ordre canonique ; liste vide sous 3 caractères utiles (trop de bruit).
+    """
+    needle = search_key(query.strip())
+    if len(needle) < 3:
+        return []
+    results = []
+    for book_id, chapter, verse, text, key in _search_rows():
+        if needle in key:
+            results.append(
+                {"book_id": book_id, "chapter": chapter, "verse": verse, "text": text}
+            )
+            if len(results) >= limit:
+                break
+    return results
 
 
 def get_passage(book_id: int, chapter: int, verse_start: int, verse_end: int):

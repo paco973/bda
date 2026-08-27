@@ -40,6 +40,42 @@ def test_navigation_accueil_bible(qapp):
         win.close()
 
 
+def test_raccourcis_presentation(qapp):
+    """Flèches seules = diapositive précédente/suivante, B = écran noir."""
+    from PySide6.QtCore import Qt, QEvent
+    from PySide6.QtGui import QKeyEvent
+    bible.ensure_imported()
+    from logos.ui.control_window import ControlWindow
+
+    def key(win, k):
+        win.keyPressEvent(QKeyEvent(QEvent.KeyPress, k, Qt.KeyboardModifier.NoModifier))
+
+    win = ControlWindow()
+    try:
+        win._open_bible()
+        win.bible_panel._select_book(43)
+        win.bible_panel._select_chapter(3)
+        win.bible_panel._select_verse(16)
+        win._on_bible_project()
+        assert "Jean 3:16" in win.controller.window.label.text()
+
+        key(win, Qt.Key_Right)
+        assert "Jean 3:17" in win.controller.window.label.text()
+        key(win, Qt.Key_Left)
+        assert "Jean 3:16" in win.controller.window.label.text()
+        key(win, Qt.Key_B)
+        assert win.controller.blackout()
+        key(win, Qt.Key_B)
+        assert not win.controller.blackout()
+
+        # Sur l'accueil (aucun mode affiché), les touches sont sans effet.
+        win._go_home()
+        key(win, Qt.Key_Right)
+        assert "Jean 3:16" in win.controller.window.label.text()
+    finally:
+        win.close()
+
+
 def test_reglages_persistants(qapp):
     """Taille du texte et versets par diapositive sont restaurés au relancement."""
     from logos.ui.control_window import ControlWindow

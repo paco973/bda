@@ -29,6 +29,7 @@ import json
 import re
 import sys
 import time
+import unicodedata
 import urllib.request
 from urllib.parse import quote
 from pathlib import Path
@@ -156,9 +157,11 @@ def main(argv=None):
     print(f"  {len(entries)} prédications listées.")
 
     def initial(title):
+        # Désaccentue l'initiale (« Élie » -> E, « Être » -> E) comme le fait le
+        # classement de l'application : --letters A…Z couvre ainsi tous les titres.
         for ch in title:
             if ch.isalpha():
-                return ch.upper()
+                return unicodedata.normalize("NFD", ch)[0].upper()
         return "#"
 
     selected = [e for e in entries if initial(e["title_fr"]) in wanted]

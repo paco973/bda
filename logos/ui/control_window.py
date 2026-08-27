@@ -358,6 +358,8 @@ class ControlWindow(QMainWindow):
         view_menu.addAction(action("Prédications", self._open_predications, "F4"))
 
         help_menu = bar.addMenu("Aide")
+        help_menu.addAction(action("Raccourcis clavier", self._show_shortcuts))
+        help_menu.addSeparator()
         help_menu.addAction(
             action("Rechercher les mises à jour…", self._check_updates_manually)
         )
@@ -381,6 +383,45 @@ class ControlWindow(QMainWindow):
             ("Diapositive précédente", self._menu_prev, "Ctrl+Left"),
         ):
             self.addAction(action(text, handler, shortcut))
+
+    def keyPressEvent(self, event):
+        """Raccourcis « présentation » sans modificateur, à la manière d'un
+        logiciel de diaporama : flèches / PgPréc-PgSuiv / Espace pour naviguer,
+        B pour l'écran noir. Qt ne fait remonter ici que les touches non
+        consommées par le widget qui a le focus — un champ de recherche ou une
+        liste garde donc ses propres flèches."""
+        controls = self._active_controls()
+        if controls is not None:
+            key = event.key()
+            if key in (Qt.Key_Right, Qt.Key_Down, Qt.Key_PageDown, Qt.Key_Space):
+                controls.go_next()
+                event.accept()
+                return
+            if key in (Qt.Key_Left, Qt.Key_Up, Qt.Key_PageUp):
+                controls.go_prev()
+                event.accept()
+                return
+            if key == Qt.Key_B:
+                controls.toggle_blackout()
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def _show_shortcuts(self):
+        QMessageBox.information(
+            self,
+            "Raccourcis clavier",
+            "<b>Projection</b> (mode affiché)<br>"
+            "F5 — Projeter<br>"
+            "F6 ou B — Écran noir<br>"
+            "Maj+F5 — Arrêter la projection<br>"
+            "→ ↓ PgSuiv Espace ou Ctrl+→ — Diapositive suivante<br>"
+            "← ↑ PgPréc ou Ctrl+← — Diapositive précédente<br><br>"
+            "<i>Les flèches seules sont inactives quand le curseur est dans un "
+            "champ de recherche.</i><br><br>"
+            "<b>Navigation</b><br>"
+            "Ctrl+H — Accueil · F2 — Bible · F4 — Prédications",
+        )
 
     def _menu_project(self):
         controls = self._active_controls()

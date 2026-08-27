@@ -19,7 +19,7 @@ import json
 import sys
 
 from logos.data.database import get_connection, get_meta, set_meta
-from logos.data.textutils import strip_accents
+from logos.data.textutils import search_key, strip_accents
 from logos.resources import asset_path, bundled_asset_path
 
 ASSET_NAME = "predications.json.gz"
@@ -185,20 +185,30 @@ def list_by_prefix(prefix: str):
 
 
 def search(query: str, limit: int = 200):
-    """Recherche par titre FR/EN ou code date (id, date_code, title_fr, title_en)."""
+    """Recherche par titre FR/EN ou code date (id, date_code, title_fr, title_en).
+
+    Accents, casse et apostrophes ignorés (« l'adoption » trouve « L’Adoption »,
+    « predestination » trouve « Prédestination ») ; comparaison en Python car
+    le LIKE de SQLite est sensible aux accents. Le corpus reste petit
+    (~2 000 titres), la passe est immédiate."""
+    needle = search_key(query.strip())
+    if not needle:
+        return []
     conn = get_connection()
-    like = f"%{query}%"
     rows = conn.execute(
         """
         SELECT id, date_code, title_fr, title_en FROM predications
-        WHERE title_fr LIKE ? OR title_en LIKE ? OR date_code LIKE ?
         ORDER BY title_fr, date_code
-        LIMIT ?
-        """,
-        (like, like, like, limit),
+        """
     ).fetchall()
     conn.close()
-    return rows
+    results = [
+        row for row in rows
+        if needle in search_key(row["title_fr"])
+        or needle in search_key(row["title_en"])
+        or needle in search_key(row["date_code"])
+    ]
+    return results[:limit]
 
 
 def paragraph_count(predication_id: int) -> int:
