@@ -33,6 +33,7 @@ from logos.ui.widgets import (
     FlowHost,
     NumButton,
     NumberedTextRow,
+    ProgressiveRows,
     circular_logo,
     clear_layout,
 )
@@ -194,8 +195,10 @@ class PredicationPanel(QWidget):
     close_requested = Signal()     # retour à l'accueil
     download_requested = Signal()  # « Télécharger les prédications… » (état vide)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent=None):
+        # Le parent est passé dès la construction : rattacher le panneau
+        # après coup repolirait tout son sous-arbre (coûteux sous QSS).
+        super().__init__(parent)
         self.setStyleSheet(f"background:{theme.COLOR_BACKGROUND};")
 
         self._letter = None
@@ -203,11 +206,13 @@ class PredicationPanel(QWidget):
         self._predication = None       # {id, date_code, title_fr} sélectionné
         self._paragraph = None         # numéro de paragraphe sélectionné
         self._part = 0                 # partie sélectionnée d'un paragraphe découpé
+        self._partial_start = 0        # position de départ dans le paragraphe sélectionné
         self._paragraphs = []          # (number, text) de la prédication courante
         self._letter_cards = {}        # lettre -> _LetterCard
         self._prefix_chips = {}        # préfixe -> _PrefixChip
         self._fits = None              # prédicat (texte)->bool : tient-il à l'écran ?
-        self._deck_cache = None        # (pred_id, deck, meta) — découpage mémorisé
+        self._deck_cache = None        # (clé, deck, meta) — jeu de diapos assemblé
+        self._chunks = {}              # numéro -> morceaux du paragraphe entier
 
         self._build_ui()
 
@@ -343,6 +348,7 @@ class PredicationPanel(QWidget):
         self.reading_layout.setContentsMargins(20, 16, 20, 24)
         self.reading_layout.setSpacing(4)
         self.reading_layout.addStretch()
+        self._reading_rows = ProgressiveRows(self.reading_layout)
         self.reading_area.setWidget(self.reading_host)
         layout.addWidget(self.reading_area, 1)
 
@@ -494,13 +500,14 @@ class PredicationPanel(QWidget):
     def _load_alphabet(self):
         self.entries_label.setText(f"{predications.total_count()} entrées")
         first_letter = None
-        for letter, count in predications.letters_with_counts():
-            card = _LetterCard(letter, count)
-            card.clicked.connect(self._select_letter)
-            self._letter_cards[letter] = card
-            self.alphabet_flow.addWidget(card)
-            if first_letter is None and count > 0:
-                first_letter = letter
+        with self.alphabet_host.bulk_fill() as flow:
+            for letter, count in predications.letters_with_counts():
+                card = _LetterCard(letter, count)
+                card.clicked.connect(self._select_letter)
+                self._letter_cards[letter] = card
+                flow.addWidget(card)
+                if first_letter is None and count > 0:
+                    first_letter = letter
         if first_letter is not None:
             self._select_letter(first_letter)
 
@@ -538,8 +545,7 @@ class PredicationPanel(QWidget):
         """Recharge entièrement le panneau (après un téléchargement de corpus)."""
         for flow in (self.alphabet_flow, self.prefix_flow, self.para_flow):
             clear_layout(flow)
-        clear_layout(self.reading_layout)
-        self.reading_layout.addStretch()
+        self._reading_rows.reset([])  # vide la colonne et annule le reliquat
         clear_layout(self.list_layout)
         self.list_layout.addStretch()
         self._letter_cards = {}
@@ -553,6 +559,7 @@ class PredicationPanel(QWidget):
         self._part = 0
         self._paragraphs = []
         self._deck_cache = None
+        self._chunks = {}
         self.kicker_label.setText("")
         self.title_label.setText("")
         self.list_title.setText("")
@@ -573,16 +580,17 @@ class PredicationPanel(QWidget):
         self._rebuild_prefixes()
 
     def _rebuild_prefixes(self):
-        clear_layout(self.prefix_flow)
         self._prefix_chips = {}
         first = None
-        for prefix, count in predications.prefixes_with_counts(self._letter):
-            chip = _PrefixChip(prefix, count)
-            chip.picked.connect(self._select_prefix)
-            self._prefix_chips[prefix] = chip
-            self.prefix_flow.addWidget(chip)
-            if first is None:
-                first = prefix
+        with self.prefix_host.bulk_fill() as flow:
+            clear_layout(flow)
+            for prefix, count in predications.prefixes_with_counts(self._letter):
+                chip = _PrefixChip(prefix, count)
+                chip.picked.connect(self._select_prefix)
+                self._prefix_chips[prefix] = chip
+                flow.addWidget(chip)
+                if first is None:
+                    first = prefix
         if first is not None:
             self._select_prefix(first)
 
@@ -614,7 +622,7 @@ class PredicationPanel(QWidget):
             self._paragraph = None
             self.kicker_label.setText("")
             self.title_label.setText("")
-            clear_layout(self.reading_layout)
+            self._reading_rows.reset([])
             clear_layout(self.para_flow)
             self._update_status_texts()
             self.selection_changed.emit()
@@ -635,46 +643,68 @@ class PredicationPanel(QWidget):
 
         self._paragraphs = predications.get_paragraphs(pred_id)
         self._paragraph = 1 if self._paragraphs else None
+        self._partial_start = 0
         self._rebuild_reading()
         self._rebuild_paragraphs()
         self._update_status_texts()
         self.selection_changed.emit()
 
     def _rebuild_reading(self):
-        clear_layout(self.reading_layout)
         self._para_rows = {}
+        rows = []
         for number, text in self._paragraphs:
             row = NumberedTextRow(number, text)
             row.clicked.connect(self._select_paragraph)
-            self._para_rows[number] = row
-            self.reading_layout.addWidget(row)
-        self.reading_layout.addStretch()
-        for number, row in self._para_rows.items():
+            row.partial_selected.connect(self._on_partial_selected)
             row.set_active(number == self._paragraph)
+            self._para_rows[number] = row
+            rows.append(row)
+        # Posées par lots : une longue prédication figeait la fenêtre le temps
+        # de mettre en page des centaines de paragraphes.
+        self._reading_rows.reset(rows)
 
     def _rebuild_paragraphs(self):
-        clear_layout(self.para_flow)
         self._para_buttons = {}
-        for number, _text in self._paragraphs:
-            btn = NumButton(number)
-            btn.set_active(number == self._paragraph)
-            btn.picked.connect(self._select_paragraph)
-            self._para_buttons[number] = btn
-            self.para_flow.addWidget(btn)
+        with self.para_host.bulk_fill() as flow:
+            clear_layout(flow)
+            for number, _text in self._paragraphs:
+                btn = NumButton(number)
+                btn.set_active(number == self._paragraph)
+                btn.picked.connect(self._select_paragraph)
+                self._para_buttons[number] = btn
+                flow.addWidget(btn)
 
     def _select_paragraph(self, number, part=0):
+        if number != self._paragraph:
+            self._partial_start = 0  # la sélection partielle suit son paragraphe
         self._paragraph = number
         self._part = part
         for n, row in getattr(self, "_para_rows", {}).items():
             row.set_active(n == number)
         for n, btn in getattr(self, "_para_buttons", {}).items():
             btn.set_active(n == number)
-        # Fait défiler la lecture jusqu'au paragraphe sélectionné.
+        # Fait défiler la lecture jusqu'au paragraphe sélectionné (en le posant
+        # d'abord s'il fait encore partie du reliquat à afficher).
         row = getattr(self, "_para_rows", {}).get(number)
         if row is not None:
+            self._reading_rows.ensure_placed(row)
             self.reading_area.ensureWidgetVisible(row)
         self._update_status_texts()
         self.selection_changed.emit()
+
+    def _on_partial_selected(self, number, offset):
+        """Sélection à la souris dans un paragraphe : la projection démarre à la
+        sélection (offset -1 = pas de sélection -> paragraphe entier)."""
+        if number != self._paragraph:
+            return
+        partial = max(0, offset) if offset >= 0 else 0
+        if partial == self._partial_start:
+            return
+        self._partial_start = partial
+        # Le texte projeté est plus court : le découpage repart de son début.
+        self._part = 0
+        self._update_status_texts()
+        self.selection_changed.emit()  # recharge l'aperçu (et le direct si à l'antenne)
 
     def _step_paragraph(self, delta):
         if not self._paragraphs:
@@ -713,7 +743,10 @@ class PredicationPanel(QWidget):
         else:
             self.status_left.setText("Prédications")
         if self._paragraph is not None:
-            self.status_right.setText(f"Paragraphe {self._paragraph} sélectionné")
+            status = f"Paragraphe {self._paragraph} sélectionné"
+            if self._partial_start > 0:
+                status += " · projeté à partir de la sélection"
+            self.status_right.setText(status)
         else:
             self.status_right.setText("Sélectionnez un paragraphe")
 
@@ -724,11 +757,57 @@ class PredicationPanel(QWidget):
         diapositives (« Titre · §3 · 2/4 »)."""
         self._fits = fits
         self._deck_cache = None
+        self._chunks = {}
 
     def invalidate_deck(self):
         """À appeler quand les conditions de mesure changent (taille du texte,
         écran cible) : le découpage sera recalculé à la prochaine demande."""
         self._deck_cache = None
+        self._chunks = {}
+
+    def _paragraph_chunks(self, number, raw_text, label, fits):
+        """Morceaux projetables d'un paragraphe, mémorisés pour le texte entier.
+
+        Le paragraphe tronqué par une sélection à la souris n'est pas mémorisé :
+        il change à chaque glissement de souris, et il est le seul dans ce cas.
+        Sans cela, chaque sélection redécouperait toute la prédication — un quart
+        de seconde sur les plus longues, juste au relâchement du bouton."""
+        text = self._paragraph_display_text(number, raw_text)
+        if text is not raw_text:
+            return self._split(text, label, fits)
+        chunks = self._chunks.get(number)
+        if chunks is None:
+            chunks = self._split(raw_text, label, fits)
+            self._chunks[number] = chunks
+        return chunks
+
+    @staticmethod
+    def _split(text, label, fits):
+        """Découpe un texte en morceaux qui tiennent dans la projection."""
+        # La mesure inclut un gabarit de suffixe « 99/99 » : le libellé réel
+        # « i/n » ajouté ensuite ne peut alors pas faire déborder la diapo.
+        pred = None if fits is None else (
+            lambda chunk: fits(f"{chunk}\n{label} · 99/99")
+        )
+        return slides.split_to_fit(text, pred)
+
+    def _paragraph_display_text(self, number, text) -> str:
+        """Texte projetable d'un paragraphe : tronqué au début de la sélection à
+        la souris (« … la seconde moitié ») si elle porte sur le paragraphe
+        sélectionné."""
+        if number == self._paragraph and self._partial_start > 0:
+            return "…" + text[self._partial_start:].lstrip()
+        return text
+
+    def _deck_key(self):
+        """Ce dont dépend le découpage : la prédication, et — seulement quand une
+        sélection partielle est active — le paragraphe visé et son point de
+        départ. Sans sélection partielle, la clé ne bouge pas d'un paragraphe à
+        l'autre : le découpage reste mémorisé."""
+        pred_id = self._predication["id"] if self._predication else None
+        if not self._partial_start:
+            return (pred_id, None, 0)
+        return (pred_id, self._paragraph, self._partial_start)
 
     def _build_deck(self):
         """(diapositives, méta) : méta[i] = (numéro de paragraphe, partie).
@@ -736,27 +815,23 @@ class PredicationPanel(QWidget):
         Un paragraphe = une diapositive, sauf s'il ne tient pas dans la
         projection (`set_fit_predicate`) : il est alors découpé par mots en
         autant de parties que nécessaire, chacune libellée « i/n ». Le résultat
-        est mémorisé par prédication (la mesure de place est coûteuse)."""
-        pred_id = self._predication["id"] if self._predication else None
-        if self._deck_cache is not None and self._deck_cache[0] == pred_id:
+        est mémorisé (la mesure de place est coûteuse), la clé tenant compte
+        d'une éventuelle sélection partielle."""
+        key = self._deck_key()
+        if self._deck_cache is not None and self._deck_cache[0] == key:
             return self._deck_cache[1], self._deck_cache[2]
         deck, meta = [], []
         title = self._predication["title_fr"] if self._predication else ""
         fits = self._fits
-        for number, text in self._paragraphs:
+        for number, raw_text in self._paragraphs:
             label = f"{title} · §{number}"
-            # La mesure inclut un gabarit de suffixe « 99/99 » : le libellé réel
-            # « i/n » ajouté ensuite ne peut alors pas faire déborder la diapo.
-            pred = None if fits is None else (
-                lambda chunk, label=label: fits(f"{chunk}\n{label} · 99/99")
-            )
-            chunks = slides.split_to_fit(text, pred)
+            chunks = self._paragraph_chunks(number, raw_text, label, fits)
             total = len(chunks)
             for part, chunk in enumerate(chunks):
                 suffix = label if total == 1 else f"{label} · {part + 1}/{total}"
                 deck.append(f"{chunk}\n{suffix}")
                 meta.append((number, part))
-        self._deck_cache = (pred_id, deck, meta)
+        self._deck_cache = (key, deck, meta)
         return deck, meta
 
     def current_deck(self):

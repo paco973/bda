@@ -4,7 +4,9 @@ Petits widgets et aides génériques partagés par les panneaux de l'UI
 
 Aucune logique métier ici : uniquement des composants réutilisables.
 """
-from PySide6.QtCore import Qt, Signal, QRect, QSize, QPoint
+from contextlib import contextmanager
+
+from PySide6.QtCore import Qt, QTimer, Signal, QRect, QSize, QPoint
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath
 from PySide6.QtWidgets import QWidget, QLabel, QLayout, QPushButton
 
@@ -90,6 +92,22 @@ class FlowHost(QWidget):
         super().resizeEvent(event)
         self.setMinimumHeight(self.flow.heightForWidth(self.width()))
 
+    @contextmanager
+    def bulk_fill(self):
+        """Remplissage en masse d'une grille : `with host.bulk_fill() as flow:`.
+
+        Tant que le conteneur est visible, chaque ajout repositionne toute la
+        grille — le remplissage devient quadratique (623 ms pour les 642 cases
+        d'une longue prédication, 123 ms en masquant le temps de l'ajout).
+        Rien n'est peint entre-temps : aucun événement n'est traité ici."""
+        hidden = self.isHidden()   # ne pas ré-afficher ce qu'on avait masqué
+        self.setVisible(False)
+        try:
+            yield self.flow
+        finally:
+            if not hidden:
+                self.setVisible(True)
+
 
 # --------------------------------------------------------------------------- #
 #  Petits composants
@@ -102,30 +120,28 @@ class NumButton(QPushButton):
     def __init__(self, number: int):
         super().__init__(str(number))
         self.number = number
+        self._active = False
         self.setFixedSize(42, 42)
         self.setCursor(Qt.PointingHandCursor)
         self.clicked.connect(lambda: self.picked.emit(self.number))
-        self.set_active(False)
+        # Les deux états tiennent dans une seule feuille, posée une fois ici.
+        self.setProperty("active", False)
+        self.setStyleSheet(theme.num_button_style())
 
     def set_active(self, active: bool):
-        # padding:0 est indispensable : le padding QPushButton de la QSS globale
-        # (8px 14px) rognerait sinon les nombres à 2-3 chiffres dans la case fixe.
-        if active:
-            self.setStyleSheet(
-                f"QPushButton {{ background:{theme.COLOR_PRIMARY};"
-                f" color:{theme.COLOR_TEXT_ON_PRIMARY}; padding:0;"
-                f" border:1px solid {theme.COLOR_PRIMARY}; border-radius:5px;"
-                f" font-size:13px; font-weight:700; }}"
-            )
-        else:
-            self.setStyleSheet(
-                f"QPushButton {{ background:{theme.COLOR_SURFACE_ALT};"
-                f" color:{theme.COLOR_TEXT_MUTED}; padding:0;"
-                f" border:1px solid {theme.COLOR_BORDER_SUBTLE}; border-radius:5px;"
-                f" font-size:13px; font-weight:600; }}"
-                f" QPushButton:hover {{ border-color:{theme.COLOR_PRIMARY};"
-                f" color:{theme.COLOR_TEXT}; }}"
-            )
+        """Bascule l'état sélectionné (voir `theme.num_button_style`).
+
+        Une grille compte des centaines de cases et les panneaux appellent
+        `set_active` sur toute la grille à chaque clic : on ne fait que basculer
+        une propriété, au lieu de reposer une feuille de style — ce qui obligeait
+        Qt à réanalyser la cascade de chaque case."""
+        if active == self._active:
+            return
+        self._active = active
+        self.setProperty("active", active)
+        # Qt ne réévalue pas la QSS sur un simple changement de propriété.
+        self.style().unpolish(self)
+        self.style().polish(self)
 
 
 class NumberedTextRow(QLabel):
@@ -135,7 +151,14 @@ class NumberedTextRow(QLabel):
     Le texte est sélectionnable à la souris : au relâchement, `partial_selected`
     transmet la position (dans le texte brut) du début de la sélection, ou -1
     s'il n'y a pas de sélection — le panneau peut s'en servir pour démarrer la
-    projection au milieu du texte."""
+    projection au milieu du texte.
+
+    **Ses mesures sont mémorisées** (`heightForWidth`, `sizeHint`) : une colonne
+    de lecture en aligne des centaines dans une même `QVBoxLayout`, et Qt
+    remesure *toutes* les lignes dès que l'une d'elles change — surligner le
+    paragraphe sélectionné remettait en page 642 textes à retour à la ligne
+    (~370 ms par clic sur une longue prédication). Ces mesures ne dépendent que
+    du texte et de l'état actif : les recalculer à chaque fois est inutile."""
 
     clicked = Signal(int)
     partial_selected = Signal(int, int)   # (numéro, position de début, ou -1)
@@ -149,12 +172,39 @@ class NumberedTextRow(QLabel):
         self.setCursor(Qt.PointingHandCursor)
         self._text = text
         self._active = None
+        self._forget_measures()
         self.set_active(False)
+
+    # ------------------------- Mesures mémorisées ------------------------- #
+    def _forget_measures(self):
+        """À appeler dès que le contenu ou l'état change (la mise en page du
+        texte, donc sa hauteur, en dépendent)."""
+        self._heights = {}       # largeur -> hauteur du texte replié
+        self._size_hint = None
+        self._min_size_hint = None
+
+    def heightForWidth(self, width: int) -> int:
+        height = self._heights.get(width)
+        if height is None:
+            height = super().heightForWidth(width)
+            self._heights[width] = height
+        return height
+
+    def sizeHint(self):
+        if self._size_hint is None:
+            self._size_hint = super().sizeHint()
+        return self._size_hint
+
+    def minimumSizeHint(self):
+        if self._min_size_hint is None:
+            self._min_size_hint = super().minimumSizeHint()
+        return self._min_size_hint
 
     def set_active(self, active: bool):
         if active == self._active:
             return  # setText effacerait une sélection à la souris en cours
         self._active = active
+        self._forget_measures()
         num_color = theme.COLOR_ON_PRIMARY_MUTED if active else theme.BRONZE
         text_color = theme.COLOR_TEXT_ON_PRIMARY if active else theme.COLOR_TEXT
         bg = theme.COLOR_PRIMARY if active else "transparent"
@@ -200,6 +250,69 @@ def circular_logo(size: int):
     painter.drawPixmap(0, 0, src)
     painter.end()
     return result
+
+
+class ProgressiveRows:
+    """Pose les lignes d'une colonne de lecture par lots, sans figer l'interface.
+
+    Mettre en page des centaines de lignes de texte replié coûte près d'une
+    seconde (Qt mesure chaque ligne) : sur une longue prédication, la fenêtre
+    se figeait le temps d'afficher un texte dont l'opérateur ne voit qu'un
+    écran. Les premières lignes sont donc posées tout de suite, le reste arrive
+    par lots dès que la boucle d'événements est libre.
+
+    `ensure_placed` force la suite quand une sélection vise une ligne pas encore
+    posée (navigation au clavier, saut depuis le poste de contrôle) : une ligne
+    absente du layout n'a pas de géométrie, on ne pourrait pas y défiler.
+    """
+
+    def __init__(self, layout, first: int = 40, batch: int = 40):
+        self._layout = layout
+        self._first = first
+        self._batch = batch
+        self._pending = []
+        self._generation = 0
+
+    def reset(self, widgets):
+        """Repart d'une colonne vide et pose le premier lot."""
+        self._generation += 1
+        for widget in self._pending:  # reliquat jamais posé : à détruire aussi
+            widget.setParent(None)
+            widget.deleteLater()
+        self._pending = list(widgets)
+        clear_layout(self._layout)
+        self._layout.addStretch()
+        self._place(self._first)
+        self._schedule(self._generation)
+
+    def ensure_placed(self, widget):
+        """Pose immédiatement `widget` (et tout ce qui le précède) s'il attend."""
+        if widget in self._pending:
+            self._place(self._pending.index(widget) + 1)
+
+    def flush(self):
+        """Pose tout le reliquat d'un coup (utile aux tests)."""
+        self._place(len(self._pending))
+
+    def _place(self, count):
+        # L'étirement final doit rester en dernier : on insère juste avant.
+        position = max(0, self._layout.count() - 1)
+        for widget in self._pending[:count]:
+            self._layout.insertWidget(position, widget)
+            position += 1
+        del self._pending[:count]
+
+    def _schedule(self, generation):
+        if self._pending:
+            # Le layout sert de contexte : Qt abandonne le lot en attente s'il a
+            # été détruit entre-temps (fenêtre fermée, panneau rechargé).
+            QTimer.singleShot(0, self._layout, lambda: self._next(generation))
+
+    def _next(self, generation):
+        if generation != self._generation:
+            return  # une autre colonne a été chargée entre-temps
+        self._place(self._batch)
+        self._schedule(generation)
 
 
 def clear_layout(layout):

@@ -75,6 +75,86 @@ def test_deck_du_chapitre(qapp):
     assert deck[index].endswith("Jean 3:16")
 
 
+def test_pavage_memorise_et_invalide(qapp):
+    """Le pavage est mémorisé d'une sélection à l'autre, mais `invalidate_deck`
+    le fait recalculer quand la place disponible change (taille du texte, écran).
+    Sans cette invalidation, on projetterait un regroupement périmé."""
+    bible.ensure_imported()
+    from logos.ui.bible_panel import BiblePanel
+
+    panel = BiblePanel()
+    panel._select_book(19)      # Psaumes
+    panel._select_chapter(119)  # 176 versets
+    panel._verses_per_slide = 5
+
+    # Beaucoup de place : les versets se regroupent.
+    place = {"hauteur": 10_000}
+    mesures = []
+
+    def tient(texte):
+        mesures.append(texte)
+        return len(texte) <= place["hauteur"]
+
+    panel.set_fit_predicate(tient)
+    large, _index = panel.current_deck()
+    assert len(large) < len(panel._chapter_verses)
+    premier_passage = len(mesures)
+    assert premier_passage > 100  # mesurer tout le psaume coûte cher
+
+    # Le pavage est mémorisé : le redemander ne remesure rien. Le poste de
+    # contrôle et le panneau le réclament plusieurs fois par sélection.
+    mesures.clear()
+    panel.current_deck()
+    assert mesures == []
+
+    # Moins de place : sans invalidation, on projetterait le pavage d'avant.
+    place["hauteur"] = 1
+    panel.invalidate_deck()
+    serre, _index = panel.current_deck()
+    assert len(serre) == len(panel._chapter_verses)  # un verset par diapositive
+
+
+def test_nom_de_livre_non_tronque_a_tort(qapp):
+    """Le nom est élidé avec la police réellement affichée (9 px), pas avec la
+    police par défaut du système : sinon des noms qui tiennent sont coupés, et
+    différemment sur macOS et sur Windows."""
+    bible.ensure_imported()
+    from logos.ui.bible_panel import BiblePanel
+
+    panel = BiblePanel()
+    noms = {
+        5: "Deutéronome",
+        13: "1 Chroniques",
+        25: "Lamentations",
+        55: "2 Timothée",
+    }
+    for book_id, attendu in noms.items():
+        affiche = panel._book_cards[book_id].name_label.text()
+        assert affiche == attendu, f"{attendu} affiché « {affiche} »"
+        assert "…" not in affiche
+
+
+def test_repartition_de_la_colonne_de_navigation(qapp):
+    """Le bloc chapitres/versets ne prend qu'une part de la hauteur : figé à
+    300 px, il ne laissait que deux lignes de livres sur une fenêtre courte
+    (poste Windows dont l'affichage est à 125 ou 150 %)."""
+    bible.ensure_imported()
+    from logos.ui.bible_panel import BiblePanel
+
+    panel = BiblePanel()
+    panel.show()
+    try:
+        for hauteur in (700, 560, 467):
+            panel.resize(1180, hauteur)
+            colonne = panel.nav_bottom.parentWidget().height()
+            assert panel.nav_bottom.maximumHeight() <= 300
+            if colonne:
+                # Le bas ne monopolise jamais plus de la moitié de la colonne.
+                assert panel.nav_bottom.maximumHeight() <= colonne * 0.5 + 1
+    finally:
+        panel.close()
+
+
 def test_projeter_emet_le_signal(qapp):
     bible.ensure_imported()
     from logos.ui.bible_panel import BiblePanel

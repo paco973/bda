@@ -11,7 +11,7 @@ Aucune logique de projection ici : le panneau émet des signaux vers la fenêtre
 de contrôle, qui reste seule maîtresse de la fenêtre de projection.
 """
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QFontMetrics
+from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QWidget,
     QCompleter,
@@ -33,6 +33,7 @@ from logos.ui.widgets import (
     FlowHost,
     NumButton,
     NumberedTextRow,
+    ProgressiveRows,
     circular_logo,
     clear_layout,
 )
@@ -48,6 +49,21 @@ _SUPERSCRIPT = {
 
 def _superscript(number: int) -> str:
     return "".join(_SUPERSCRIPT[d] for d in str(number))
+
+
+# Taille du nom complet sur une carte de livre. Sert à la fois au style et à
+# l'élision : les deux doivent employer la même, sinon le nom est tronqué selon
+# une police qui n'est pas celle affichée (et qui varie d'un système à l'autre).
+_BOOK_NAME_PX = 9
+
+# Répartition de la colonne de navigation entre la grille des livres (haut) et
+# les grilles chapitres/versets (bas) : le bas ne dépasse ni `_NAV_BOTTOM_MAX`
+# pixels ni `_NAV_BOTTOM_RATIO` de la hauteur disponible. Les deux blocs
+# défilent, mais chercher un livre est le geste le plus fréquent : la grille des
+# livres ne doit pas se réduire à deux lignes sur un écran à forte mise à
+# l'échelle.
+_NAV_BOTTOM_MAX = 300
+_NAV_BOTTOM_RATIO = 0.42
 
 
 # --------------------------------------------------------------------------- #
@@ -72,33 +88,50 @@ class _BookCard(QFrame):
         self.abbr_label.setAlignment(Qt.AlignCenter)
         self.name_label = QLabel()
         self.name_label.setAlignment(Qt.AlignCenter)
-        elided = QFontMetrics(self.name_label.font()).elidedText(
-            book["name"], Qt.ElideRight, 66
+        # Mesurer avec la taille réellement appliquée par `set_active` : la police
+        # par défaut du QLabel est celle du système (9 pt ici, autre chose sur
+        # Windows ou macOS), et élider avec elle tronquait des noms qui tiennent
+        # — différemment selon la plateforme.
+        font = QFont(self.name_label.font())
+        font.setPixelSize(_BOOK_NAME_PX)
+        self.name_label.setText(
+            QFontMetrics(font).elidedText(book["name"], Qt.ElideRight, 66)
         )
-        self.name_label.setText(elided)
         col.addWidget(self.abbr_label)
         col.addWidget(self.name_label)
 
+        self._active = None
         self.set_active(False)
 
     def set_active(self, active: bool):
+        # Le panneau appelle set_active sur les 66 cartes à chaque changement de
+        # livre : sans ce garde, on reposerait trois feuilles de style par carte
+        # (198 réanalyses de cascade) alors que deux cartes seulement changent.
+        if active == self._active:
+            return
+        self._active = active
         # Couleur du groupe canonique (Pentateuque, Épîtres…) ; la sélection
         # garde l'accent doré de l'application.
         group_color = theme.BOOK_GROUP_COLORS[bible.book_group(self.book_id)]
         if active:
             abbr, name = theme.COLOR_TEXT_ON_PRIMARY, theme.COLOR_ON_PRIMARY_MUTED
-            bg = border = theme.COLOR_PRIMARY
+            bg = theme.COLOR_PRIMARY
+            # Anneau du fond du panneau : depuis que les cartes sont claires,
+            # l'aplat doré seul ne se détachait plus de ses voisines chaudes.
+            border = f"2px solid {theme.COLOR_BACKGROUND}"
         else:
             abbr, name = theme.COLOR_TEXT_ON_GROUP, theme.COLOR_TEXT_ON_GROUP_MUTED
-            bg = border = group_color
+            bg = group_color
+            border = f"1px solid {group_color}"
         self.setStyleSheet(
-            f"_BookCard {{ background:{bg}; border:1px solid {border}; border-radius:6px; }}"
+            f"_BookCard {{ background:{bg}; border:{border}; border-radius:6px; }}"
         )
         self.abbr_label.setStyleSheet(
             f"color:{abbr}; font-size:14px; font-weight:700; background:transparent; border:none;"
         )
         self.name_label.setStyleSheet(
-            f"color:{name}; font-size:9px; font-weight:600; background:transparent; border:none;"
+            f"color:{name}; font-size:{_BOOK_NAME_PX}px; font-weight:600;"
+            f" background:transparent; border:none;"
         )
 
     def set_dimmed(self, dimmed: bool):
@@ -116,8 +149,10 @@ class BiblePanel(QWidget):
     project_requested = Signal()          # « Projeter le verset » cliqué
     close_requested = Signal()            # retour à l'accueil (bouton « ‹ Retour »)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent=None):
+        # Le parent est passé dès la construction : rattacher le panneau
+        # après coup repolirait tout son sous-arbre (coûteux sous QSS).
+        super().__init__(parent)
         self.setStyleSheet(f"background:{theme.COLOR_BACKGROUND};")
 
         self._books = []            # liste de dicts {id, name, chapters}
@@ -129,6 +164,7 @@ class BiblePanel(QWidget):
         self._book_cards = {}       # id -> _BookCard
         self._verses_per_slide = 1  # nombre MAX de versets regroupés par diapositive
         self._fits = None           # prédicat (texte)->bool : le texte tient-il à l'écran ?
+        self._group_cache = {}      # pos -> groupe complet (pavage mémorisé)
 
         self._build_ui()
 
@@ -316,6 +352,7 @@ class BiblePanel(QWidget):
         self.reading_layout.setContentsMargins(20, 16, 20, 24)
         self.reading_layout.setSpacing(4)
         self.reading_layout.addStretch()
+        self._reading_rows = ProgressiveRows(self.reading_layout)
         self.reading_area.setWidget(self.reading_host)
         layout.addWidget(self.reading_area, 1)
 
@@ -384,7 +421,12 @@ class BiblePanel(QWidget):
             f"background:{theme.COLOR_SURFACE_SUNKEN};"
             f" border-top:1px solid {theme.COLOR_SURFACE_ALT};"
         )
-        bottom.setMaximumHeight(300)
+        # Plafond ajusté à la hauteur disponible (voir `_fit_navigation_split`) :
+        # figé à 300 px, ce bloc gardait la même place sur une fenêtre courte et
+        # ne laissait presque rien à la grille des livres — cas d'un poste
+        # Windows dont l'affichage est à 125 ou 150 %.
+        self.nav_bottom = bottom
+        bottom.setMaximumHeight(_NAV_BOTTOM_MAX)
         bottom_row = QHBoxLayout(bottom)
         bottom_row.setContentsMargins(0, 0, 0, 0)
         bottom_row.setSpacing(0)
@@ -470,11 +512,12 @@ class BiblePanel(QWidget):
             {"id": row["id"], "name": row["name"], "chapters": row["chapters"]}
             for row in bible.get_books()
         ]
-        for book in self._books:
-            card = _BookCard(book)
-            card.clicked.connect(self._select_book)
-            self._book_cards[book["id"]] = card
-            self.books_flow.addWidget(card)
+        with self.books_host.bulk_fill() as flow:
+            for book in self._books:
+                card = _BookCard(book)
+                card.clicked.connect(self._select_book)
+                self._book_cards[book["id"]] = card
+                flow.addWidget(card)
 
         # Autocomplétion des noms de livres dans la barre de recherche.
         completer = QCompleter([b["name"] for b in self._books], self.search_edit)
@@ -528,12 +571,13 @@ class BiblePanel(QWidget):
         self._load_chapter()
 
     def _rebuild_chapters(self):
-        clear_layout(self.chapters_flow)
-        for n in range(1, self._book["chapters"] + 1):
-            btn = NumButton(n)
-            btn.set_active(n == self._chapter)
-            btn.picked.connect(self._select_chapter)
-            self.chapters_flow.addWidget(btn)
+        with self.chapters_host.bulk_fill() as flow:
+            clear_layout(flow)
+            for n in range(1, self._book["chapters"] + 1):
+                btn = NumButton(n)
+                btn.set_active(n == self._chapter)
+                btn.picked.connect(self._select_chapter)
+                flow.addWidget(btn)
 
     def _select_chapter(self, chapter):
         self._chapter = chapter
@@ -547,28 +591,31 @@ class BiblePanel(QWidget):
     def _load_chapter(self):
         verses = bible.get_chapter(self._book["id"], self._chapter)
         self._chapter_verses = verses
+        self._reset_group_cache()
         self.testament_label.setText(bible.testament(self._book["id"]).upper())
         self.reference_label.setText(f"{self._book['name']} {self._chapter}")
 
-        # Colonne de lecture.
-        clear_layout(self.reading_layout)
+        # Colonne de lecture, posée par lots (un psaume de 176 versets figeait
+        # la fenêtre le temps de mettre en page tout le chapitre).
         self._verse_rows = {}
+        rows = []
         for verse, text in verses:
             row = NumberedTextRow(verse, text)
             row.clicked.connect(self._select_verse)
             row.partial_selected.connect(self._on_partial_selected)
             self._verse_rows[verse] = row
-            self.reading_layout.addWidget(row)
-        self.reading_layout.addStretch()
+            rows.append(row)
+        self._reading_rows.reset(rows)
 
         # Grille des versets.
-        clear_layout(self.verses_flow)
         self._verse_buttons = {}
-        for verse, _text in verses:
-            btn = NumButton(verse)
-            btn.picked.connect(self._select_verse)
-            self._verse_buttons[verse] = btn
-            self.verses_flow.addWidget(btn)
+        with self.verses_host.bulk_fill() as flow:
+            clear_layout(flow)
+            for verse, _text in verses:
+                btn = NumButton(verse)
+                btn.picked.connect(self._select_verse)
+                self._verse_buttons[verse] = btn
+                flow.addWidget(btn)
 
         self._update_status_texts()
         self.selection_changed.emit()
@@ -581,6 +628,20 @@ class BiblePanel(QWidget):
         """Injecte un prédicat `(texte)->bool` : le texte tient-il dans la
         projection ? Utilisé pour ne regrouper que les versets qui rentrent."""
         self._fits = fits
+        self._reset_group_cache()
+
+    def invalidate_deck(self):
+        """À appeler quand les conditions de mesure changent (taille du texte,
+        écran cible) : le pavage sera recalculé à la prochaine demande."""
+        self._reset_group_cache()
+
+    def _reset_group_cache(self):
+        """Vide le pavage mémorisé.
+
+        Il est désactivé (None) tant qu'une sélection partielle est active : le
+        rendu d'un groupe dépend alors du verset sélectionné, donc du contexte,
+        et n'est plus mémorisable par simple position."""
+        self._group_cache = {} if self._partial_start == 0 else None
 
     def select_slide(self, index: int):
         """Sélection d'une diapositive (groupe de versets) par son index."""
@@ -619,8 +680,22 @@ class BiblePanel(QWidget):
     def _group_from(self, pos: int, end: int):
         """Groupe débutant à `pos` : le verset et les suivants, jusqu'à
         `verses_per_slide` versets ET tant que le texte tient à l'écran
-        (`self._fits`). Toujours au moins un verset."""
+        (`self._fits`). Toujours au moins un verset.
+
+        Le groupe complet (borné au seul chapitre) est mémorisé : le pavage est
+        recalculé à chaque sélection, et mesurer la place coûte un `boundingRect`
+        par essai — 174 mesures pour un Psaume 119. Tronquer à `end` donne bien
+        le même résultat que la boucle bornée, celle-ci ne faisant que s'arrêter
+        plus tôt."""
+        group = self._full_group_from(pos)
+        return group[: max(1, end - pos)]
+
+    def _full_group_from(self, pos: int):
+        """`_group_from(pos, fin du chapitre)`, mémorisé (voir `invalidate_deck`)."""
+        if self._group_cache is not None and pos in self._group_cache:
+            return self._group_cache[pos]
         verses = self._chapter_verses
+        end = len(verses)
         n = max(1, self._verses_per_slide)
         group = [verses[pos]]
         k = pos + 1
@@ -630,6 +705,8 @@ class BiblePanel(QWidget):
                 break
             group.append(verses[k])
             k += 1
+        if self._group_cache is not None:
+            self._group_cache[pos] = group
         return group
 
     def _page(self, start: int, end: int):
@@ -664,18 +741,23 @@ class BiblePanel(QWidget):
         return [v for v, _t in self._group_from(pos, len(verses))]
 
     def _select_verse(self, verse):
-        if verse != self._verse:
-            self._partial_start = 0  # la sélection partielle suit son verset
+        if verse != self._verse and self._partial_start:
+            # La sélection partielle suit son verset ; en la quittant, le pavage
+            # cesse de dépendre du verset choisi et redevient mémorisable.
+            self._partial_start = 0
+            self._reset_group_cache()
         self._verse = verse
         group = set(self._group_verses(verse))
         for v, row in getattr(self, "_verse_rows", {}).items():
             row.set_active(v in group)
         for v, btn in getattr(self, "_verse_buttons", {}).items():
             btn.set_active(v in group)
-        # Fait défiler la lecture jusqu'au premier verset du groupe.
+        # Fait défiler la lecture jusqu'au premier verset du groupe (en le
+        # posant d'abord s'il fait encore partie du reliquat à afficher).
         anchor = min(group) if group else verse
         row = getattr(self, "_verse_rows", {}).get(anchor)
         if row is not None:
+            self._reading_rows.ensure_placed(row)
             self.reading_area.ensureWidgetVisible(row)
         self._update_status_texts()
         self.selection_changed.emit()
@@ -689,11 +771,14 @@ class BiblePanel(QWidget):
         if partial == self._partial_start:
             return
         self._partial_start = partial
+        # Le rendu des groupes dépend maintenant du verset sélectionné.
+        self._reset_group_cache()
         self._update_status_texts()
         self.selection_changed.emit()  # recharge l'aperçu (et le direct si à l'antenne)
 
     def _on_verses_per_slide_changed(self, value: int):
         self._verses_per_slide = max(1, value)
+        self._reset_group_cache()
         self.project_btn.setText(
             "Projeter le verset" if self._verses_per_slide == 1 else "Projeter les versets"
         )
@@ -798,8 +883,28 @@ class BiblePanel(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._fit_navigation_split()
         if self.verse_results.isVisible():
             self._place_verse_results()
+
+    def _fit_navigation_split(self):
+        """Borne le bloc chapitres/versets à une part de la hauteur disponible.
+
+        Sans cela, son plafond fixe de 300 px reste entier quand la fenêtre
+        rétrécit (mise à l'échelle Windows à 125/150 %, petit écran) et la
+        grille des livres tombe à deux lignes."""
+        bottom = getattr(self, "nav_bottom", None)   # peut manquer à la construction
+        if bottom is None:
+            return
+        column = bottom.parentWidget()
+        if column is None:
+            return
+        available = column.height()
+        if available <= 0:
+            return
+        bottom.setMaximumHeight(
+            min(_NAV_BOTTOM_MAX, max(120, int(available * _NAV_BOTTOM_RATIO)))
+        )
 
     def keyPressEvent(self, event):
         # Échap referme la liste de résultats (la touche remonte depuis le champ).

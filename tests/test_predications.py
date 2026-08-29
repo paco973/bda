@@ -260,6 +260,86 @@ def test_decoupage_paragraphes_selon_la_place(qapp):
     assert panel._paragraph == 2 and panel._part == 0
 
 
+def test_projection_partielle_d_un_paragraphe(qapp):
+    """Sélectionner un passage du paragraphe fait démarrer la projection à cet
+    endroit (« … »), comme dans le mode Bible."""
+    predications.import_data({
+        "predications": [
+            {"date_code": "60-0101", "title_fr": "Alpha", "title_en": "",
+             "paragraphs": ["Le commencement puis la suite du propos", "court"]},
+        ]
+    })
+    from logos.ui.predication_panel import PredicationPanel
+
+    panel = PredicationPanel()
+    panel._select_paragraph(1)
+    texte = dict(panel._paragraphs)[1]
+    offset = texte.index("puis la suite")
+
+    panel._on_partial_selected(1, offset)
+    deck, index = panel.current_deck()
+    assert deck[index] == "…puis la suite du propos\nAlpha · §1"
+    assert panel.status_right.text().endswith("projeté à partir de la sélection")
+
+    # Une sélection visant un autre paragraphe que le courant est ignorée.
+    panel._on_partial_selected(2, 3)
+    deck, index = panel.current_deck()
+    assert deck[index].startswith("…puis la suite")
+
+    # Relâchement sans sélection (offset -1) : paragraphe entier.
+    panel._on_partial_selected(1, -1)
+    deck, index = panel.current_deck()
+    assert deck[index].startswith("Le commencement")
+
+    # Changer de paragraphe remet la sélection à zéro.
+    panel._on_partial_selected(1, offset)
+    panel._select_paragraph(2)
+    assert panel._partial_start == 0
+
+
+def test_partielle_redecoupe_le_seul_paragraphe_vise(qapp):
+    """Le texte tronqué est redécoupé selon la place, et lui seul : redécouper
+    toute la prédication à chaque glissement de souris coûterait trop cher."""
+    predications.import_data({
+        "predications": [
+            {"date_code": "60-0101", "title_fr": "Alpha", "title_en": "",
+             "paragraphs": ["un deux trois quatre cinq six sept", "huit neuf dix onze"]},
+        ]
+    })
+    from logos.ui import predication_panel as module
+    from logos.ui.predication_panel import PredicationPanel
+
+    decoupages = []
+    vrai_split = module.slides.split_to_fit
+
+    def compte(text, fits=None):
+        decoupages.append(text)
+        return vrai_split(text, fits)
+
+    module.slides.split_to_fit = compte
+    try:
+        panel = PredicationPanel()
+        panel.set_fit_predicate(lambda text: len(text) <= 25)
+        entier, _index = panel.current_deck()
+        panel._select_paragraph(1)
+
+        decoupages.clear()
+        panel._on_partial_selected(1, dict(panel._paragraphs)[1].index("cinq"))
+        deck, index = panel.current_deck()
+        assert len(decoupages) == 1              # seul le §1 est redécoupé
+        assert deck[index].startswith("…cinq")
+        assert len(deck) < len(entier)           # tronqué : moins de diapositives
+        assert all(len(slide) <= 25 for slide in deck)
+
+        # Revenir au texte entier ne recalcule rien : il est resté mémorisé.
+        decoupages.clear()
+        panel._on_partial_selected(1, -1)
+        assert panel.current_deck()[0] == entier
+        assert decoupages == []
+    finally:
+        module.slides.split_to_fit = vrai_split
+
+
 def test_panneau_indisponible(qapp):
     from logos.ui.predication_panel import PredicationPanel
 

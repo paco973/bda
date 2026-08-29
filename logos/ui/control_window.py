@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
     QLabel,
+    QLineEdit,
     QProgressDialog,
     QStackedWidget,
     QMessageBox,
@@ -32,6 +33,11 @@ from logos.version import __version__
 
 # Clé `meta` du réglage « vérifier les mises à jour au démarrage ».
 _AUTO_CHECK_KEY = "check_updates_on_startup"
+
+# Diamètre du logo sur la page d'accueil. À cette taille le sceau se lit
+# (le nom de l'église est déchiffrable) et la page tient encore dans une
+# fenêtre de 560 px de haut — au-delà, le contenu de l'accueil déborderait.
+_HOME_LOGO_SIZE = 200
 
 
 # --------------------------------------------------------------------------- #
@@ -130,6 +136,10 @@ class ControlWindow(QMainWindow):
         # Contrôleur de projection partagé (unique fenêtre de projection).
         self.controller = ProjectionController()
 
+        # Réglage « versets par diapositive » : détenu par la fenêtre, car il est
+        # restauré avant que le panneau Bible n'existe (construction paresseuse).
+        self._verses_per_slide = 1
+
         self._build_ui()
 
         # Réglages persistants (taille du texte, écran, versets par diapositive) :
@@ -142,9 +152,6 @@ class ControlWindow(QMainWindow):
         self._last_fit_key = self._fit_key()
         self.controller.changed.connect(self._on_controller_changed)
         self.controller.changed.connect(self._save_settings)
-        self.bible_panel.verses_spin.valueChanged.connect(
-            lambda _value: self._save_settings()
-        )
 
         # Branchement/débranchement d'un écran pendant l'exécution.
         app = QGuiApplication.instance()
@@ -160,10 +167,14 @@ class ControlWindow(QMainWindow):
         key = self._fit_key()
         if key != self._last_fit_key:
             self._last_fit_key = key
-            # Re-pagine les deux modes selon la place disponible.
-            self._on_bible_selection()
-            self.predication_panel.invalidate_deck()
-            self._on_predication_selection()
+            # Re-pagine les modes déjà construits selon la place disponible
+            # (un mode encore jamais ouvert se paginera à sa construction).
+            if self.bible_panel is not None:
+                self.bible_panel.invalidate_deck()
+                self._on_bible_selection()
+            if self.predication_panel is not None:
+                self.predication_panel.invalidate_deck()
+                self._on_predication_selection()
 
     # ---------- Réglages persistants ----------
     def _restore_settings(self):
@@ -178,14 +189,20 @@ class ControlWindow(QMainWindow):
                     break
         verses = get_meta("ui_verses_per_slide")
         if verses and verses.isdigit():
-            self.bible_panel.verses_spin.setValue(int(verses))
+            # Le panneau Bible n'existe pas encore (construit à la première
+            # ouverture) : la fenêtre garde la valeur et la lui posera alors.
+            self._verses_per_slide = int(verses)
+
+    def _on_verses_per_slide(self, value: int):
+        self._verses_per_slide = value
+        self._save_settings()
 
     def _save_settings(self):
         screen = self.controller.screen()
         state = (
             str(self.controller.font_size()),
             screen.name() if screen is not None else "",
-            str(self.bible_panel.verses_spin.value()),
+            str(self._verses_per_slide),
         )
         if state == self._saved_settings:
             return  # `changed` est émis souvent : n'écrire que si ça a bougé
@@ -198,13 +215,20 @@ class ControlWindow(QMainWindow):
     def _build_ui(self):
         self.stack = QStackedWidget()
 
-        self.bible_page = self._build_bible_page()
-        self.predication_page = self._build_predication_page()
-        self.home_page = self._build_home_page()
+        # Les pages de mode sont construites à la **première ouverture**, pas au
+        # lancement : peupler les deux navigateurs d'avance coûtait plusieurs
+        # secondes de démarrage (des centaines de widgets, repolis en entier à
+        # chaque reparentage sous la feuille de style globale) pour des pages que
+        # l'opérateur ne voit pas encore — il arrive sur l'accueil.
+        self.bible_page = None
+        self.bible_panel = None
+        self.bible_controls = None
+        self.predication_page = None
+        self.predication_panel = None
+        self.predication_controls = None
 
+        self.home_page = self._build_home_page()
         self.stack.addWidget(self.home_page)
-        self.stack.addWidget(self.bible_page)
-        self.stack.addWidget(self.predication_page)
         self.stack.setCurrentWidget(self.home_page)
 
         # Réglages de projection globaux (écran + taille du texte), sous les pages.
@@ -236,9 +260,23 @@ class ControlWindow(QMainWindow):
         self.settings_bar.setVisible(self.stack.currentWidget() is not self.home_page)
 
     # ---------- Pages des modes ----------
-    def _mode_page(self, panel, controls):
-        """Page d'un mode : navigateur à gauche + colonne « Projection » à droite."""
-        side = QFrame()
+    def _new_mode_page(self):
+        """Coquille vide d'une page de mode, **déjà rattachée à la pile**.
+
+        L'ordre compte : sous une feuille de style applicative, reparenter un
+        widget repolit tout son sous-arbre. En rattachant la page d'abord, le
+        navigateur qu'on y construit ensuite n'est polissé qu'une fois, au lieu
+        d'une fois par étape d'assemblage (page, pile, widget central)."""
+        page = QWidget()
+        layout = QHBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.stack.addWidget(page)
+        return page, layout
+
+    def _add_mode_side(self, page, controls):
+        """Colonne « Projection » à droite d'une page de mode."""
+        side = QFrame(page)
         side.setFixedWidth(300)
         side.setStyleSheet(
             f"background:{theme.COLOR_SURFACE};"
@@ -253,52 +291,62 @@ class ControlWindow(QMainWindow):
         )
         side_layout.addWidget(title)
         side_layout.addWidget(controls)
+        page.layout().addWidget(side)
 
-        page = QWidget()
-        layout = QHBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(panel, 1)
-        layout.addWidget(side)
-        return page
+    def _ensure_bible_page(self):
+        """Construit la page Bible à sa première ouverture (voir `_build_ui`)."""
+        if self.bible_page is not None:
+            return
+        page, layout = self._new_mode_page()
 
-    def _build_bible_page(self):
-        self.bible_panel = BiblePanel()
+        self.bible_panel = BiblePanel(page)
         # Ne regrouper que les versets qui tiennent dans la projection.
         self.bible_panel.set_fit_predicate(self.controller.text_fits)
+        # Réglage restauré depuis `meta` avant que le panneau n'existe. Posé
+        # avant tout branchement : le poste de contrôle n'existe pas encore, et
+        # changer la valeur recharge le jeu de diapositives.
+        self.bible_panel.verses_spin.setValue(self._verses_per_slide)
         self.bible_panel.close_requested.connect(self._go_home)
         self.bible_panel.selection_changed.connect(self._on_bible_selection)
         self.bible_panel.project_requested.connect(self._on_bible_project)
+        self.bible_panel.verses_spin.valueChanged.connect(self._on_verses_per_slide)
+        layout.addWidget(self.bible_panel, 1)
 
         # Pas de bouton « Projeter » ici : le navigateur a « Projeter le verset ».
         self.bible_controls = ProjectionControls(
             self.controller, "bible", "Bible", show_project_button=False
         )
         self.bible_controls.index_changed.connect(self._on_bible_controls_index)
+        self._add_mode_side(page, self.bible_controls)
 
-        page = self._mode_page(self.bible_panel, self.bible_controls)
+        self.bible_page = page
         # Charge le jeu de versets initial dans le poste de contrôle Bible.
         self._on_bible_selection()
-        return page
 
-    def _build_predication_page(self):
-        self.predication_panel = PredicationPanel()
+    def _ensure_predication_page(self):
+        """Construit la page Prédications à sa première ouverture."""
+        if self.predication_page is not None:
+            return
+        page, layout = self._new_mode_page()
+
+        self.predication_panel = PredicationPanel(page)
         # Découpe les paragraphes trop longs selon la place dans la projection.
         self.predication_panel.set_fit_predicate(self.controller.text_fits)
         self.predication_panel.download_requested.connect(self._download_predications)
         self.predication_panel.close_requested.connect(self._go_home)
         self.predication_panel.selection_changed.connect(self._on_predication_selection)
         self.predication_panel.project_requested.connect(self._on_predication_project)
+        layout.addWidget(self.predication_panel, 1)
 
         # Projection via « Projeter le paragraphe » du navigateur (pas de doublon).
         self.predication_controls = ProjectionControls(
             self.controller, "predication", "Prédications", show_project_button=False
         )
         self.predication_controls.index_changed.connect(self._on_predication_controls_index)
+        self._add_mode_side(page, self.predication_controls)
 
-        page = self._mode_page(self.predication_panel, self.predication_controls)
+        self.predication_page = page
         self._on_predication_selection()
-        return page
 
     # ---------- Page d'accueil ----------
     def _build_home_page(self):
@@ -307,11 +355,11 @@ class ControlWindow(QMainWindow):
         outer.setContentsMargins(40, 40, 40, 40)
         outer.addStretch()
 
-        logo = circular_logo(96)
+        logo = circular_logo(_HOME_LOGO_SIZE)
         if logo is not None:
             logo_label = QLabel()
             logo_label.setPixmap(logo)
-            logo_label.setFixedSize(96, 96)
+            logo_label.setFixedSize(_HOME_LOGO_SIZE, _HOME_LOGO_SIZE)
             logo_label.setAlignment(Qt.AlignCenter)
             row = QHBoxLayout()
             row.addStretch()
@@ -358,9 +406,11 @@ class ControlWindow(QMainWindow):
 
     # ---------- Navigation entre pages ----------
     def _open_bible(self):
+        self._ensure_bible_page()
         self.stack.setCurrentWidget(self.bible_page)
 
     def _open_predications(self):
+        self._ensure_predication_page()
         self.stack.setCurrentWidget(self.predication_page)
 
     def _go_home(self):
@@ -369,9 +419,9 @@ class ControlWindow(QMainWindow):
     def _active_controls(self):
         """Poste de contrôle du mode affiché (ou None sur l'accueil)."""
         current = self.stack.currentWidget()
-        if current is self.bible_page:
+        if self.bible_page is not None and current is self.bible_page:
             return self.bible_controls
-        if current is self.predication_page:
+        if self.predication_page is not None and current is self.predication_page:
             return self.predication_controls
         return None
 
@@ -423,7 +473,7 @@ class ControlWindow(QMainWindow):
         for text, handler, shortcut in (
             ("Projeter", self._menu_project, "F5"),
             ("Écran noir", self._menu_blackout, "F6"),
-            ("Arrêter la projection", self.controller.stop, "Shift+F5"),
+            ("Quitter la présentation", self.controller.stop, "Shift+F5"),
             ("Diapositive suivante", self._menu_next, "Ctrl+Right"),
             ("Diapositive précédente", self._menu_prev, "Ctrl+Left"),
         ):
@@ -432,9 +482,22 @@ class ControlWindow(QMainWindow):
     def keyPressEvent(self, event):
         """Raccourcis « présentation » sans modificateur, à la manière d'un
         logiciel de diaporama : flèches / PgPréc-PgSuiv / Espace pour naviguer,
-        B pour l'écran noir. Qt ne fait remonter ici que les touches non
-        consommées par le widget qui a le focus — un champ de recherche ou une
-        liste garde donc ses propres flèches."""
+        B pour l'écran noir, Échap pour quitter la présentation. Qt ne fait
+        remonter ici que les touches non consommées par le widget qui a le focus
+        — un champ de recherche ou une liste garde donc ses propres flèches."""
+        if event.key() == Qt.Key_Escape:
+            # Échap quitte la présentation, quel que soit le mode affiché.
+            # Exception : dans un champ de recherche rempli, il vide le champ.
+            # Qt n'y consomme pas la touche, et couper le direct par réflexe en
+            # effaçant une recherche serait le pire moment pour le faire.
+            focused = self.focusWidget()
+            if isinstance(focused, QLineEdit) and focused.text():
+                focused.clear()
+            else:
+                self.controller.stop()
+            event.accept()
+            return
+
         controls = self._active_controls()
         if controls is not None:
             key = event.key()
@@ -459,11 +522,11 @@ class ControlWindow(QMainWindow):
             "<b>Projection</b> (mode affiché)<br>"
             "F5 — Projeter<br>"
             "F6 ou B — Écran noir<br>"
-            "Maj+F5 — Arrêter la projection<br>"
+            "Échap ou Maj+F5 — Quitter la présentation<br>"
             "→ ↓ PgSuiv Espace ou Ctrl+→ — Diapositive suivante<br>"
             "← ↑ PgPréc ou Ctrl+← — Diapositive précédente<br><br>"
             "<i>Les flèches seules sont inactives quand le curseur est dans un "
-            "champ de recherche.</i><br><br>"
+            "champ de recherche ; Échap y vide d'abord le champ.</i><br><br>"
             "<b>Navigation</b><br>"
             "Ctrl+H — Accueil · F2 — Bible · F4 — Prédications",
         )
@@ -573,8 +636,11 @@ class ControlWindow(QMainWindow):
                 )
                 return
             path = predications.save_user_corpus(data)
-            self.predication_panel.reload()
-            self._on_predication_selection()
+            if self.predication_panel is not None:
+                # Le mode a pu ne jamais être ouvert (téléchargement via le menu) :
+                # il lira le nouveau corpus à sa construction.
+                self.predication_panel.reload()
+                self._on_predication_selection()
             QMessageBox.information(
                 self, "Téléchargement terminé",
                 f"{len(data['predications'])} prédications importées.\n\n"
@@ -649,6 +715,8 @@ class ControlWindow(QMainWindow):
 
     # ---------- Bible ----------
     def _on_bible_selection(self):
+        if self.bible_controls is None:
+            return  # page en cours de construction : rechargée à la fin
         deck, index = self.bible_panel.current_deck()
         self.bible_controls.load(deck, index)
 
@@ -662,6 +730,8 @@ class ControlWindow(QMainWindow):
 
     # ---------- Prédications ----------
     def _on_predication_selection(self):
+        if self.predication_controls is None:
+            return  # page en cours de construction : rechargée à la fin
         deck, index = self.predication_panel.current_deck()
         self.predication_controls.load(deck, index)
 

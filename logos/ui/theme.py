@@ -1,9 +1,15 @@
 """
 Thème visuel de l'application BDA, basé sur le logo de l'église Logos
-Tabernacle (cercle noir, fond doré/bronze avec bokeh, barre dorée centrale).
+Tabernacle (sceau doré sur bleu marine profond : anneau et lettrage dorés,
+croix et barre dorées, rameaux de laurier).
 
 Toutes les couleurs de l'interface doivent passer par ce module afin de
 garder une identité visuelle cohérente et facile à ajuster.
+
+Les tons sombres sont ceux du sceau ; l'or reste l'accent. L'échelle marine
+reprend les **clartés** de l'ancienne échelle brune : tous les contrastes de
+texte déjà validés restent valides (l'or clair est à 14,9:1 sur le fond,
+le bronze à 5,2:1, au-dessus du seuil AA de 4,5).
 """
 
 APP_NAME = "BDA"
@@ -15,15 +21,20 @@ GOLD = "#F3CD87"            # or principal
 GOLD_MID = "#EEC781"        # or intermédiaire
 GOLD_DARK = "#E4BC77"       # ambre
 BRONZE = "#A3814C"          # bronze foncé (ombre de la barre dorée)
-BLACK = "#1A120A"           # noir profond (cercle, texte du logo)
+NAVY_DEEPEST = "#071023"    # bleu du sceau, au plus sombre (pourtour du logo)
+NAVY_DEEP = "#0C1830"       # bleu du champ intérieur du sceau
+NAVY = "#11203C"            # bleu éclairci (zones alternées)
+NAVY_SUNKEN = "#091428"     # bleu en creux (sous la barre dorée)
+NAVY_BORDER = "#16253F"     # bleu des séparations discrètes
+BLACK = "#0A0F1A"           # noir bleuté, pour le texte posé sur un aplat doré
 
 # ---------- Rôles sémantiques ----------
-COLOR_BACKGROUND = BLACK          # fond des panneaux (thème sombre)
-COLOR_SURFACE = "#241C12"         # fond des zones de contenu (légèrement plus clair)
-COLOR_SURFACE_ALT = "#2E2416"     # fond alterné (listes, champs)
-COLOR_SURFACE_SUNKEN = "#211A10"  # zone en creux (chapitres/versets sous la Bible)
+COLOR_BACKGROUND = NAVY_DEEPEST   # fond des panneaux (thème sombre)
+COLOR_SURFACE = NAVY_DEEP         # fond des zones de contenu (légèrement plus clair)
+COLOR_SURFACE_ALT = NAVY          # fond alterné (listes, champs)
+COLOR_SURFACE_SUNKEN = NAVY_SUNKEN  # zone en creux (chapitres/versets sous la Bible)
 COLOR_BORDER = BRONZE
-COLOR_BORDER_SUBTLE = "#3A2E1C"   # séparateurs et bordures discrètes
+COLOR_BORDER_SUBTLE = NAVY_BORDER  # séparateurs et bordures discrètes
 COLOR_PRIMARY = GOLD              # accent principal (boutons, sélection)
 COLOR_PRIMARY_HOVER = GOLD_LIGHT
 COLOR_PRIMARY_PRESSED = GOLD_DARK
@@ -39,20 +50,26 @@ COLOR_WARNING = "#D89A3C"         # avertissement (un autre mode est à l'antenn
 COLOR_LIVE = "#79C77B"            # indicateur « en direct » (projection active)
 
 # ---------- Grille des livres bibliques ----------
-# Une couleur par groupe canonique (clés de logos/data/bible.py :: book_group),
-# déclinées pour rester lisibles sur le thème sombre.
+# Une couleur par groupe canonique (clés de logos/data/bible.py :: book_group).
+# Mêmes teintes qu'à l'origine, mais **éclaircies** et calées sur une luminance
+# commune : à teinte égale, une même clarté HSL se perçoit très différemment
+# (l'orange criait quand le brun s'effaçait). Toutes donnent maintenant 6,1:1
+# avec le texte des cartes, bien au-dessus du seuil AA de 4,5 — la version
+# sombre précédente passait sous ce seuil sur trois groupes.
 BOOK_GROUP_COLORS = {
-    "pentateuque": "#6B4A2B",     # brun
-    "historiques": "#A87424",     # orange
-    "poetiques": "#9C3A2E",       # rouge brique
-    "prophetes": "#74497F",       # violet
-    "evangiles": "#3E5C9A",       # bleu
-    "actes": "#2E7F8A",           # cyan
-    "epitres": "#2E7A4E",         # vert
-    "apocalypse": "#748F2F",      # vert clair
+    "pentateuque": "#BB8655",     # brun
+    "historiques": "#C18429",     # orange
+    "poetiques": "#D4776C",       # rouge brique
+    "prophetes": "#AC82B8",       # violet
+    "evangiles": "#7691C8",       # bleu
+    "actes": "#399EAB",           # cyan
+    "epitres": "#3DA368",         # vert
+    "apocalypse": "#7F9B33",      # vert clair
 }
-COLOR_TEXT_ON_GROUP = "#F7F2E7"           # abréviation sur carte colorée
-COLOR_TEXT_ON_GROUP_MUTED = "rgba(255, 255, 255, 0.72)"  # nom du livre
+# Cartes éclaircies : le texte passe en sombre, comme sur la carte sélectionnée
+# (aplat doré) — un fond clair et un texte clair ne pouvaient pas cohabiter.
+COLOR_TEXT_ON_GROUP = BLACK                          # abréviation sur carte colorée
+COLOR_TEXT_ON_GROUP_MUTED = "rgba(10, 15, 26, 0.68)"  # nom du livre
 
 # Police à empattement pour la lecture du texte biblique (rappel « imprimé »).
 READING_FONT_FAMILY = "Georgia, 'Times New Roman', 'Noto Serif', serif"
@@ -384,6 +401,32 @@ def btn_primary_style() -> str:
         f" border:none; border-radius:6px; padding:11px; font-size:13px; font-weight:700; }}"
         f"QPushButton:hover {{ background:{COLOR_PRIMARY_HOVER}; }}"
         f"QPushButton:disabled {{ background:{COLOR_SURFACE_ALT}; color:{BRONZE}; }}"
+    )
+
+
+def num_button_style() -> str:
+    """Case numérotée (chapitre, verset, paragraphe), états inactif et actif.
+
+    Les deux états tiennent dans **une seule** feuille, posée une fois à la
+    construction : la sélection ne fait ensuite que basculer la propriété
+    `active` (voir `widgets.NumButton`). Reposer une feuille à chaque clic
+    obligeait Qt à réanalyser la cascade des centaines de cases d'une grille.
+
+    Ce style ne peut pas vivre dans `build_stylesheet` : les conteneurs des
+    grilles posent des déclarations sans sélecteur, qui cascadent sur leurs
+    descendants et priment sur la feuille applicative.
+
+    `padding:0` est indispensable : le padding QPushButton de la feuille globale
+    rognerait les nombres à 2-3 chiffres dans la case de taille fixe.
+    """
+    return (
+        f"QPushButton {{ background:{COLOR_SURFACE_ALT}; color:{COLOR_TEXT_MUTED};"
+        f" padding:0; border:1px solid {COLOR_BORDER_SUBTLE}; border-radius:5px;"
+        f" font-size:13px; font-weight:600; }}"
+        f"QPushButton:hover {{ border-color:{COLOR_PRIMARY}; color:{COLOR_TEXT}; }}"
+        f'QPushButton[active="true"] {{ background:{COLOR_PRIMARY};'
+        f" color:{COLOR_TEXT_ON_PRIMARY}; border-color:{COLOR_PRIMARY};"
+        f" font-weight:700; }}"
     )
 
 

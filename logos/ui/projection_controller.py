@@ -28,12 +28,16 @@ class ProjectionController(QObject):
     def __init__(self):
         super().__init__()
         self.window = ProjectionWindow()
+        # Échap depuis la fenêtre de projection : arrête la présentation.
+        self.window.close_requested.connect(self.stop)
         self._font_size = 48
         self._blackout = False
         self._on_air = None       # clé du mode à l'antenne, ou None
         self._live_text = ""
         self._modes = {}          # clé -> libellé lisible
         self._screen = None
+        self._metrics = None      # QFontMetrics réutilisées par text_fits
+        self._metrics_size = None
         self._pick_default_screen()
 
     # ---------------------------- Modes ---------------------------------- #
@@ -104,10 +108,15 @@ class ProjectionController(QObject):
         avail_h = geo.height() - 2 * _PROJECTION_MARGIN
         if avail_w <= 0 or avail_h <= 0:
             return True
-        font = QFont()
-        font.setPointSize(self._font_size)
-        font.setWeight(QFont.Bold)
-        rect = QFontMetrics(font).boundingRect(
+        # Paginer une prédication demande un millier de mesures : la police et
+        # ses métriques sont réutilisées tant que la taille ne change pas.
+        if self._metrics_size != self._font_size:
+            font = QFont()
+            font.setPointSize(self._font_size)
+            font.setWeight(QFont.Bold)
+            self._metrics = QFontMetrics(font)
+            self._metrics_size = self._font_size
+        rect = self._metrics.boundingRect(
             0, 0, avail_w, 0, Qt.TextWordWrap | Qt.AlignCenter, text
         )
         return rect.height() <= avail_h

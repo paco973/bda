@@ -2,13 +2,18 @@
 Fenêtre de projection : affichée en plein écran, sans bordure, sur
 l'écran choisi (typiquement le vidéoprojecteur branché à l'ordinateur).
 """
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QLabel, QWidget, QVBoxLayout
 
 from logos.ui import theme
 
 
 class ProjectionWindow(QWidget):
+    # Échap pressé alors que cette fenêtre a le focus : l'opérateur veut sortir
+    # de la présentation. Le contrôleur décide de la suite (il possède l'état) ;
+    # cette fenêtre n'affiche que du contenu.
+    close_requested = Signal()
+
     def __init__(self):
         super().__init__()
         # Pas de bordure, toujours au premier plan sur son écran
@@ -30,6 +35,18 @@ class ProjectionWindow(QWidget):
         self._current_text = ""
         self._font_size = 48
         self._apply_label_style()
+
+    def keyPressEvent(self, event):
+        """Échap quitte la présentation, comme dans un logiciel de diaporama.
+
+        Affichée en plein écran, cette fenêtre peut recevoir le focus clavier :
+        sans cela, aucune touche n'agirait tant que l'opérateur ne serait pas
+        revenu sur la fenêtre de contrôle."""
+        if event.key() == Qt.Key_Escape:
+            self.close_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def _apply_label_style(self):
         # Style inline : prioritaire sur la feuille de style globale de

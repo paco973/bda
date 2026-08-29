@@ -108,17 +108,33 @@ def parse_reference(query: str):
         (bid for bid, abbr in BOOK_ABBREVIATIONS.items() if _normalize(abbr) == key),
         None,
     )
-    names = [(row["id"], _normalize(row["name"])) for row in get_books()]
     if book_id is None:
+        names = _normalized_book_names()
         book_id = next((bid for bid, name in names if name == key), None)
-    if book_id is None and len(key) >= 2:
-        book_id = next((bid for bid, name in names if name.startswith(key)), None)
+        if book_id is None and len(key) >= 2:
+            book_id = next((bid for bid, name in names if name.startswith(key)), None)
     if book_id is None:
         return None
 
     chapter = int(match.group("chapter")) if match.group("chapter") else None
     verse = int(match.group("verse")) if match.group("verse") else None
     return book_id, chapter, verse
+
+
+# Noms de livres normalisés, construits à la première référence analysée.
+# La barre de recherche appelle `parse_reference` à chaque frappe : sans ce
+# cache, chaque touche rouvrait la base pour relire et normaliser les 66 livres.
+# Invalidé par import_data().
+_book_names_cache = None
+
+
+def _normalized_book_names():
+    global _book_names_cache
+    if _book_names_cache is None:
+        _book_names_cache = [
+            (row["id"], _normalize(row["name"])) for row in get_books()
+        ]
+    return _book_names_cache
 
 
 def is_available() -> bool:
@@ -179,8 +195,10 @@ def ensure_imported():
 
 def import_data(data: dict):
     """Remplit les tables bible_* depuis le format {books: [{nr, name, chapters}]}."""
-    global _search_cache
-    _search_cache = None  # le corpus change : le cache de recherche est périmé
+    global _search_cache, _book_names_cache
+    # Le corpus change : les caches mémoire dérivés sont périmés.
+    _search_cache = None
+    _book_names_cache = None
     conn = get_connection()
     conn.execute("DELETE FROM bible_verses")
     conn.execute("DELETE FROM bible_books")

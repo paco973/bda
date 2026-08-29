@@ -662,7 +662,7 @@ cython_debug/
 
 # Corpus de prédications : contenu sous copyright (branham.fr / VGR), à ne
 # jamais publier avec le code. Chaque poste le reçoit via ~/.bda/assets/.
-logos/assets/predications.json.gz
+#logos/assets/predications.json.gz
 
 # Le motif « [Ss]cripts » plus haut vient du modèle Visual Studio, où il vise le
 # dossier Scripts/ d'un virtualenv Windows (déjà couvert ici par .venv). Il
