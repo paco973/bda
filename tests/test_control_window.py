@@ -76,6 +76,78 @@ def test_raccourcis_presentation(qapp):
         win.close()
 
 
+def test_fleches_survivent_au_focus(qapp):
+    """Les flèches doivent naviguer entre diapositives quel que soit le widget
+    focalisé : après un clic sur un verset ou une case numérotée, c'est lui qui
+    a le focus et il mangeait la touche. Les champs de saisie et les compteurs
+    gardent en revanche leur usage propre des flèches."""
+    from PySide6.QtCore import Qt, QEvent
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication, QSpinBox
+    bible.ensure_imported()
+    from logos.ui.control_window import ControlWindow
+
+    win = ControlWindow()
+    try:
+        win.show()
+        win._open_bible()
+        panel = win.bible_panel
+        panel._select_book(43)
+        panel._select_chapter(3)
+        panel._select_verse(16)
+        win._on_bible_project()
+
+        def prendre_le_focus(widget):
+            """`setFocus` passe par la boucle d'événements : sans ce tour,
+            `focusWidget()` renvoie encore le widget précédent."""
+            widget.setFocus()
+            qapp.processEvents()
+
+        def envoyer(touche):
+            """Comme un vrai appui : l'événement part du widget focalisé."""
+            cible = QApplication.focusWidget() or win
+            QApplication.sendEvent(
+                cible,
+                QKeyEvent(QEvent.KeyPress, touche, Qt.KeyboardModifier.NoModifier),
+            )
+
+        projete = lambda: win.controller.window.label.text()
+
+        # Les widgets qui mangeaient les flèches : ligne de lecture, case numérotée.
+        for widget in (panel._verse_rows[16], panel._verse_buttons[16], panel.reading_area):
+            prendre_le_focus(widget)
+            avant = projete()
+            envoyer(Qt.Key_Right)
+            assert projete() != avant, f"flèche inerte avec le focus sur {type(widget).__name__}"
+            envoyer(Qt.Key_Left)
+            assert projete() == avant
+
+        # Un champ de saisie et un compteur gardent leurs flèches : la
+        # diapositive ne doit pas bouger sous eux (le curseur se déplace, la
+        # valeur change — ce que le mode offscreen ne permet pas de vérifier
+        # sans focus clavier réel).
+        panel.search_edit.setText("Jean")
+        prendre_le_focus(panel.search_edit)
+        avant = projete()
+        envoyer(Qt.Key_Left)
+        envoyer(Qt.Key_Right)
+        assert projete() == avant, "le champ de recherche doit garder les flèches"
+        panel.search_edit.clear()
+
+        spin = win.findChild(QSpinBox)
+        prendre_le_focus(spin)
+        avant = projete()
+        envoyer(Qt.Key_Up)
+        envoyer(Qt.Key_Down)
+        assert projete() == avant, "un compteur doit garder les flèches"
+
+        # Le sélecteur d'écran ne prend plus le focus par défaut : une flèche y
+        # aurait changé l'écran de projection au lieu d'avancer.
+        assert win.settings_bar.screen_combo.focusPolicy() == Qt.ClickFocus
+    finally:
+        win.close()
+
+
 def test_echap_quitte_la_presentation(qapp):
     """Échap arrête la projection, comme dans un logiciel de diaporama — sauf
     dans un champ de recherche rempli, où il vide d'abord le champ : couper le

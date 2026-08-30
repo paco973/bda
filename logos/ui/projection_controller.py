@@ -53,9 +53,6 @@ class ProjectionController(QObject):
     def is_on_air(self, key) -> bool:
         return self._on_air is not None and self._on_air == key
 
-    def live_text(self) -> str:
-        return self._live_text
-
     # ---------------------------- Écrans --------------------------------- #
     def screens(self):
         return QGuiApplication.screens()

@@ -15,6 +15,10 @@ from logos.ui import theme
 
 _LOGO_PATH = asset_path("logo.png")
 
+# Diamètre du logo dans la barre supérieure des modes. Les deux panneaux doivent
+# l'afficher à la même taille : la constante évite qu'ils divergent.
+TOPBAR_LOGO_SIZE = 34
+
 
 # --------------------------------------------------------------------------- #
 #  Disposition en flux (les cartes se replacent sur plusieurs lignes)
@@ -230,6 +234,24 @@ class NumberedTextRow(QLabel):
             # Le texte affiché est précédé du numéro en exposant et d'une espace.
             offset = max(0, start - len(str(self.number)) - 1)
         self.partial_selected.emit(self.number, offset)
+
+
+def section_title(text: str = "", subdued: bool = False) -> QLabel:
+    """Petit intitulé de section, en capitales espacées (« LIVRES », « VERSET »).
+
+    Les deux panneaux et la fenêtre de contrôle en posent neuf : le style vit ici
+    plutôt que recopié à chaque endroit. `subdued` donne la variante de second
+    rang (bronze au lieu d'or), pour les sous-blocs d'une colonne et pour les
+    intitulés dont le texte change (testament, code date), qui tiennent le même
+    rôle visuel.
+    """
+    label = QLabel(text)
+    color = theme.BRONZE if subdued else theme.COLOR_TEXT_MUTED
+    label.setStyleSheet(
+        f"color:{color}; font-size:11px; font-weight:700;"
+        f" letter-spacing:2px; background:transparent;"
+    )
+    return label
 
 
 def circular_logo(size: int):

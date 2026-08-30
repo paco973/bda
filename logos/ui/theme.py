@@ -279,19 +279,6 @@ def build_stylesheet() -> str:
         background-color: {COLOR_SURFACE};
     }}
 
-    /* Actions destructrices : rouges, mais discrètes tant que non survolées */
-    QPushButton[buttonStyle="danger"] {{
-        background-color: transparent;
-        color: {COLOR_DANGER_HOVER};
-        border: 1px solid {COLOR_DANGER};
-        font-weight: 600;
-    }}
-
-    QPushButton[buttonStyle="danger"]:hover {{
-        background-color: {COLOR_DANGER};
-        color: white;
-    }}
-
     /* ---------- Aperçu en direct et état de projection ---------- */
     QLabel#PreviewLabel {{
         background-color: {PROJECTION_BACKGROUND};

@@ -17,6 +17,8 @@ styles de boutons de `theme`.
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QWidget,
+    QListWidget,
+    QListWidgetItem,
     QFrame,
     QLabel,
     QLineEdit,
@@ -34,8 +36,10 @@ from logos.ui.widgets import (
     NumButton,
     NumberedTextRow,
     ProgressiveRows,
+    TOPBAR_LOGO_SIZE,
     circular_logo,
     clear_layout,
+    section_title,
 )
 
 
@@ -68,9 +72,16 @@ class _LetterCard(QFrame):
         col.addWidget(self.letter_label)
         col.addStretch()
         col.addWidget(self.count_label)
+        self._active = None
         self.set_active(False)
 
     def set_active(self, active: bool):
+        # Le panneau appelle set_active sur les 26 lettres à chaque changement :
+        # sans ce garde, on reposerait trois feuilles de style par carte alors
+        # que deux cartes seulement changent d'état (cf. `NumButton`).
+        if active == self._active:
+            return
+        self._active = active
         if not self._enabled:
             bg, border = theme.COLOR_BACKGROUND, theme.COLOR_BORDER_SUBTLE
             letter_c, count_c = theme.COLOR_TEXT_DISABLED, theme.COLOR_TEXT_DISABLED
@@ -106,9 +117,13 @@ class _PrefixChip(QPushButton):
         self.setCursor(Qt.PointingHandCursor)
         self.setText(f"{prefix}  {count}")
         self.clicked.connect(lambda: self.picked.emit(self.prefix))
+        self._active = None
         self.set_active(False)
 
     def set_active(self, active: bool):
+        if active == self._active:
+            return  # appelé sur toute la rangée à chaque changement de préfixe
+        self._active = active
         if active:
             self.setStyleSheet(
                 f"QPushButton {{ background:{theme.COLOR_PRIMARY};"
@@ -152,9 +167,16 @@ class _PredicationRow(QFrame):
         titles.addWidget(self.subtitle_label)
         layout.addWidget(self.code_label)
         layout.addLayout(titles, 1)
+        self._active = None
         self.set_active(False)
 
     def set_active(self, active: bool):
+        # Une recherche renvoie jusqu'à 200 lignes et le panneau les parcourt
+        # toutes à chaque clic : sans ce garde, on reposait près de mille
+        # feuilles de style pour deux lignes réellement modifiées (280 ms).
+        if active == self._active:
+            return
+        self._active = active
         bg = theme.COLOR_PRIMARY if active else "transparent"
         code_c = theme.COLOR_ON_PRIMARY_MUTED if active else theme.BRONZE
         title_c = theme.COLOR_TEXT_ON_PRIMARY if active else theme.COLOR_TEXT
@@ -175,15 +197,6 @@ class _PredicationRow(QFrame):
 
     def mousePressEvent(self, event):
         self.clicked.emit(self.pred_id)
-
-
-def _section_title(text: str) -> QLabel:
-    label = QLabel(text)
-    label.setStyleSheet(
-        f"color:{theme.COLOR_TEXT_MUTED}; font-size:11px; font-weight:700;"
-        f" letter-spacing:2px; background:transparent;"
-    )
-    return label
 
 
 # --------------------------------------------------------------------------- #
@@ -213,6 +226,7 @@ class PredicationPanel(QWidget):
         self._fits = None              # prédicat (texte)->bool : tient-il à l'écran ?
         self._deck_cache = None        # (clé, deck, meta) — jeu de diapos assemblé
         self._chunks = {}              # numéro -> morceaux du paragraphe entier
+        self._chunks_pred = None       # prédication à laquelle ces morceaux appartiennent
 
         self._build_ui()
 
@@ -254,11 +268,11 @@ class PredicationPanel(QWidget):
         back_btn.clicked.connect(self.close_requested.emit)
         row.addWidget(back_btn)
 
-        logo = circular_logo(34)
+        logo = circular_logo(TOPBAR_LOGO_SIZE)
         if logo is not None:
             logo_label = QLabel()
             logo_label.setPixmap(logo)
-            logo_label.setFixedSize(34, 34)
+            logo_label.setFixedSize(TOPBAR_LOGO_SIZE, TOPBAR_LOGO_SIZE)
             row.addWidget(logo_label)
 
         title = QLabel(theme.APP_NAME)
@@ -291,12 +305,60 @@ class PredicationPanel(QWidget):
         search_row.addWidget(self.search_edit)
         row.addWidget(search_box)
 
-        # Anti-rebond : la recherche part 300 ms après la dernière frappe (la
-        # liste n'est pas reconstruite à chaque caractère).
+        # Recherche plein texte dans les paragraphes (« le Saint-Esprit »),
+        # pendant de la recherche dans les versets du mode Bible.
+        text_box = QFrame()
+        text_box.setStyleSheet(
+            f"background:{theme.COLOR_SURFACE_ALT}; border:1px solid {theme.COLOR_BORDER};"
+            f" border-radius:6px;"
+        )
+        text_row = QHBoxLayout(text_box)
+        text_row.setContentsMargins(12, 4, 12, 4)
+        text_row.setSpacing(8)
+        pilcrow = QLabel("¶")
+        pilcrow.setStyleSheet(
+            f"color:{theme.BRONZE}; background:transparent; border:none; font-size:13px;"
+        )
+        text_row.addWidget(pilcrow)
+        self.text_search_edit = QLineEdit()
+        self.text_search_edit.setPlaceholderText("Rechercher dans les paragraphes…")
+        self.text_search_edit.setFixedWidth(220)
+        self.text_search_edit.setClearButtonEnabled(True)
+        self.text_search_edit.setStyleSheet(
+            f"background:transparent; border:none; color:{theme.COLOR_TEXT}; font-size:13px;"
+        )
+        self.text_search_edit.textChanged.connect(self._on_text_search_text)
+        self.text_search_edit.returnPressed.connect(self._on_text_search_return)
+        text_row.addWidget(self.text_search_edit)
+        row.addWidget(text_box)
+        self._text_search_box = text_box
+
+        # Liste flottante des paragraphes trouvés, ancrée sous le champ.
+        self.text_results = QListWidget(self)
+        self.text_results.setVisible(False)
+        self.text_results.setWordWrap(False)
+        self.text_results.setTextElideMode(Qt.ElideRight)
+        self.text_results.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.text_results.setStyleSheet(
+            f"QListWidget {{ background:{theme.COLOR_SURFACE_ALT}; color:{theme.COLOR_TEXT};"
+            f" border:1px solid {theme.COLOR_BORDER}; border-radius:6px; font-size:13px; }}"
+            f"QListWidget::item {{ padding:6px 10px; }}"
+            f"QListWidget::item:selected, QListWidget::item:hover"
+            f" {{ background:{theme.COLOR_PRIMARY}; color:{theme.COLOR_TEXT_ON_PRIMARY}; }}"
+        )
+        self.text_results.itemClicked.connect(self._on_text_result_clicked)
+
+        # Anti-rebond : les recherches partent 300 ms après la dernière frappe
+        # (la liste n'est pas reconstruite à chaque caractère).
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(300)
         self._search_timer.timeout.connect(self._run_search)
+
+        self._text_search_timer = QTimer(self)
+        self._text_search_timer.setSingleShot(True)
+        self._text_search_timer.setInterval(300)
+        self._text_search_timer.timeout.connect(self._run_text_search)
 
         row.addStretch()
 
@@ -323,11 +385,7 @@ class PredicationPanel(QWidget):
         header_col = QVBoxLayout(header)
         header_col.setContentsMargins(20, 16, 20, 12)
         header_col.setSpacing(3)
-        self.kicker_label = QLabel("")
-        self.kicker_label.setStyleSheet(
-            f"color:{theme.BRONZE}; font-size:11px; font-weight:700;"
-            f" letter-spacing:2px; background:transparent;"
-        )
+        self.kicker_label = section_title(subdued=True)
         self.title_label = QLabel("")
         self.title_label.setWordWrap(True)
         self.title_label.setStyleSheet(
@@ -390,7 +448,7 @@ class PredicationPanel(QWidget):
         alpha_col = QVBoxLayout(alpha_wrap)
         alpha_col.setContentsMargins(22, 16, 22, 12)
         alpha_col.setSpacing(10)
-        alpha_col.addWidget(_section_title("Alphabet"))
+        alpha_col.addWidget(section_title("Alphabet"))
         self.alphabet_host = FlowHost(spacing=6)
         self.alphabet_flow = self.alphabet_host.flow
         alpha_col.addWidget(self.alphabet_host)
@@ -414,11 +472,7 @@ class PredicationPanel(QWidget):
         pred_col.setSpacing(10)
         pred_head = QHBoxLayout()
         pred_head.setSpacing(8)
-        pred_title = QLabel("Prédication")
-        pred_title.setStyleSheet(
-            f"color:{theme.BRONZE}; font-size:11px; font-weight:700;"
-            f" letter-spacing:2px; background:transparent;"
-        )
+        pred_title = section_title("Prédication", subdued=True)
         self.list_title = QLabel("")
         self.list_title.setStyleSheet(
             f"color:{theme.COLOR_TEXT}; font-size:13px; font-weight:700; background:transparent;"
@@ -457,11 +511,7 @@ class PredicationPanel(QWidget):
         para_col = QVBoxLayout(para_wrap)
         para_col.setContentsMargins(18, 14, 18, 14)
         para_col.setSpacing(10)
-        para_title = QLabel("Paragraphe")
-        para_title.setStyleSheet(
-            f"color:{theme.BRONZE}; font-size:11px; font-weight:700;"
-            f" letter-spacing:2px; background:transparent;"
-        )
+        para_title = section_title("Paragraphe", subdued=True)
         para_col.addWidget(para_title)
         para_scroll = QScrollArea()
         para_scroll.setWidgetResizable(True)
@@ -560,6 +610,7 @@ class PredicationPanel(QWidget):
         self._paragraphs = []
         self._deck_cache = None
         self._chunks = {}
+        self._chunks_pred = None
         self.kicker_label.setText("")
         self.title_label.setText("")
         self.list_title.setText("")
@@ -734,6 +785,96 @@ class PredicationPanel(QWidget):
         if query:
             self._populate_list(predications.search(query), header=f"« {query} »")
 
+    # ------------------ Recherche dans le texte des paragraphes ------------ #
+    def _on_text_search_text(self, text):
+        if len(text.strip()) < 3:  # même seuil que predications.search_paragraphs
+            self._text_search_timer.stop()
+            self.text_results.hide()
+            return
+        self._text_search_timer.start()
+
+    def _run_text_search(self):
+        query = self.text_search_edit.text().strip()
+        if len(query) < 3 or not self._letter_cards:
+            self.text_results.hide()
+            return
+        results = predications.search_paragraphs(query)
+        self.text_results.clear()
+        if not results:
+            empty = QListWidgetItem("Aucun paragraphe trouvé")
+            empty.setFlags(Qt.NoItemFlags)
+            self.text_results.addItem(empty)
+        for row in results:
+            texte = row["text"]
+            if len(texte) > 90:
+                texte = texte[:90].rstrip() + "…"
+            item = QListWidgetItem(
+                f"{row['date_code']} · {row['title_fr']} · §{row['number']} — {texte}"
+            )
+            item.setData(Qt.UserRole, row)
+            self.text_results.addItem(item)
+        self._place_text_results()
+        self.text_results.show()
+        self.text_results.raise_()
+
+    def _place_text_results(self):
+        """Ancre la liste de résultats sous le champ de recherche plein texte."""
+        anchor = self._text_search_box.mapTo(
+            self, self._text_search_box.rect().bottomLeft()
+        )
+        row_height = self.text_results.sizeHintForRow(0)
+        height = min(360, self.text_results.count() * max(row_height, 24) + 8)
+        width = min(720, max(460, self.width() - anchor.x() - 24))
+        self.text_results.setGeometry(anchor.x(), anchor.y() + 6, width, height)
+
+    def _on_text_result_clicked(self, item):
+        cible = item.data(Qt.UserRole)
+        if cible:
+            # Arrêter l'anti-rebond : une frappe encore en attente rouvrirait la
+            # liste juste après le saut.
+            self._text_search_timer.stop()
+            self.text_results.hide()
+            self._jump_to_paragraph(cible)
+
+    def _on_text_search_return(self):
+        """Entrée : rejoint le premier paragraphe trouvé."""
+        self._text_search_timer.stop()
+        self._run_text_search()
+        for i in range(self.text_results.count()):
+            cible = self.text_results.item(i).data(Qt.UserRole)
+            if cible:
+                self.text_results.hide()
+                self._jump_to_paragraph(cible)
+                return
+
+    def _jump_to_paragraph(self, cible):
+        """Rejoint un paragraphe trouvé par la recherche plein texte.
+
+        La prédication visée est en général sous une autre lettre et un autre
+        préfixe que ceux affichés : on refait donc tout le chemin (lettre,
+        préfixe, prédication, paragraphe). `letter` et `prefix` viennent du
+        résultat, ce qui évite une requête de plus."""
+        if cible["letter"] != self._letter:
+            self._select_letter(cible["letter"])
+        if cible["prefix"] != self._prefix:
+            self._select_prefix(cible["prefix"])
+        if self._predication is None or self._predication["id"] != cible["predication_id"]:
+            self._select_predication(cible["predication_id"], row_data=cible)
+        self._select_paragraph(cible["number"])
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.text_results.isVisible():
+            self._place_text_results()
+
+    def keyPressEvent(self, event):
+        # Échap referme la liste de résultats (la touche remonte depuis le champ).
+        if event.key() == Qt.Key_Escape and self.text_results.isVisible():
+            self.text_results.hide()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     # ----------------------------- Statut --------------------------------- #
     def _update_status_texts(self):
         if self._predication is not None:
@@ -758,20 +899,32 @@ class PredicationPanel(QWidget):
         self._fits = fits
         self._deck_cache = None
         self._chunks = {}
+        self._chunks_pred = None
 
     def invalidate_deck(self):
         """À appeler quand les conditions de mesure changent (taille du texte,
         écran cible) : le découpage sera recalculé à la prochaine demande."""
         self._deck_cache = None
         self._chunks = {}
+        self._chunks_pred = None
 
     def _paragraph_chunks(self, number, raw_text, label, fits):
         """Morceaux projetables d'un paragraphe, mémorisés pour le texte entier.
+
+        Les morceaux sont indexés par numéro de paragraphe : ils n'ont de sens
+        que pour **une** prédication, et deux prédications ont toutes deux un
+        paragraphe 1. Le cache porte donc l'identifiant de sa prédication et se
+        vide de lui-même quand elle change — s'en remettre à un vidage explicite
+        au bon endroit ferait projeter le texte d'une autre prédication.
 
         Le paragraphe tronqué par une sélection à la souris n'est pas mémorisé :
         il change à chaque glissement de souris, et il est le seul dans ce cas.
         Sans cela, chaque sélection redécouperait toute la prédication — un quart
         de seconde sur les plus longues, juste au relâchement du bouton."""
+        pred_id = self._predication["id"] if self._predication else None
+        if pred_id != self._chunks_pred:
+            self._chunks = {}
+            self._chunks_pred = pred_id
         text = self._paragraph_display_text(number, raw_text)
         if text is not raw_text:
             return self._split(text, label, fits)

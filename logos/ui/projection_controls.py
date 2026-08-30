@@ -4,8 +4,10 @@ Poste de contrôle de projection réutilisable, embarqué par chaque mode
 réglages globale.
 
 `ProjectionControls` pilote la projection via le `ProjectionController` partagé :
-aperçu en direct, navigation entre diapositives, « Projeter », « Écran noir »,
-« Arrêter », et un indicateur montrant quel mode est à l'antenne.
+aperçu en direct, navigation entre diapositives, « Écran noir », « Arrêter », et
+un indicateur montrant quel mode est à l'antenne. Chaque mode projette depuis son
+propre bouton (« Projeter le verset », « Projeter le paragraphe ») : le poste n'en
+propose pas un second, mais expose `project()` pour le raccourci F5.
 
 Le choix de l'écran cible et la taille du texte sont **globaux** (ils valent pour
 toute la projection quel que soit le mode) : ils vivent dans une unique
@@ -30,12 +32,10 @@ class ProjectionControls(QWidget):
     # Navigation interne (diapo changée) — permet au mode de synchroniser sa vue.
     index_changed = Signal(int)
 
-    def __init__(self, controller, mode_key: str, mode_label: str,
-                 show_project_button: bool = True):
+    def __init__(self, controller, mode_key: str, mode_label: str):
         super().__init__()
         self.controller = controller
         self.mode_key = mode_key
-        self._show_project_button = show_project_button
         controller.register_mode(mode_key, mode_label)
 
         self._slides = []
@@ -78,14 +78,6 @@ class ProjectionControls(QWidget):
         nav.addWidget(self.counter, 1)
         nav.addWidget(self.next_btn)
         col.addLayout(nav)
-
-        # Le bouton « Projeter » est optionnel : le mode Bible projette via son
-        # propre bouton « Projeter le verset » (on évite le doublon).
-        self.project_btn = QPushButton("Projeter")
-        self.project_btn.setStyleSheet(theme.btn_primary_style())
-        self.project_btn.clicked.connect(self.project)
-        self.project_btn.setVisible(self._show_project_button)
-        col.addWidget(self.project_btn)
 
         row = QHBoxLayout()
         self.blackout_btn = QPushButton("Écran noir")
@@ -205,6 +197,10 @@ class ProjectionSettingsBar(QWidget):
 
         row.addWidget(QLabel("Écran de projection"))
         self.screen_combo = QComboBox()
+        # Focus au clic seulement : sinon ce sélecteur prend le focus dès
+        # l'ouverture d'un mode, et une flèche « diapositive suivante » y
+        # changerait l'écran de projection au lieu d'avancer.
+        self.screen_combo.setFocusPolicy(Qt.ClickFocus)
         self.screen_combo.setMinimumWidth(240)
         self.screen_combo.currentIndexChanged.connect(self._on_screen_changed)
         row.addWidget(self.screen_combo)
@@ -213,6 +209,7 @@ class ProjectionSettingsBar(QWidget):
 
         row.addWidget(QLabel("Taille du texte"))
         self.font_spin = QSpinBox()
+        self.font_spin.setFocusPolicy(Qt.ClickFocus)  # idem : pas de focus par défaut
         self.font_spin.setRange(12, 120)
         self.font_spin.valueChanged.connect(self.controller.set_font_size)
         row.addWidget(self.font_spin)

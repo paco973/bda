@@ -12,6 +12,7 @@ import json
 import re
 import sys
 
+from logos.data import database
 from logos.data.database import get_connection, get_meta, set_meta
 from logos.data.textutils import search_key, strip_accents
 from logos.resources import asset_path, bundled_asset_path
@@ -121,15 +122,31 @@ def parse_reference(query: str):
     return book_id, chapter, verse
 
 
-# Noms de livres normalisés, construits à la première référence analysée.
-# La barre de recherche appelle `parse_reference` à chaque frappe : sans ce
-# cache, chaque touche rouvrait la base pour relire et normaliser les 66 livres.
-# Invalidé par import_data().
+# Caches mémoire dérivés du contenu de la base. Ils sont invalidés par
+# `import_data()` **et** par un changement de base : `DB_PATH` est monkeypatché
+# d'un test à l'autre, et un cache survivant à ce changement décrirait un corpus
+# qui n'est plus celui interrogé.
+_cached_db = None
 _book_names_cache = None
 
 
+def _check_db_changed():
+    """Vide les caches si la base ouverte n'est plus la même qu'au remplissage."""
+    global _cached_db, _search_cache, _book_names_cache
+    # `database.DB_PATH` et non une copie importée : les tests le remplacent
+    # à l'exécution, et une copie figée à l'import ne verrait rien.
+    if _cached_db != database.DB_PATH:
+        _cached_db = database.DB_PATH
+        _search_cache = None
+        _book_names_cache = None
+
+
 def _normalized_book_names():
+    """Noms de livres normalisés — la barre de recherche appelle
+    `parse_reference` à chaque frappe, et sans ce cache chaque touche rouvrirait
+    la base pour relire et normaliser les 66 livres."""
     global _book_names_cache
+    _check_db_changed()
     if _book_names_cache is None:
         _book_names_cache = [
             (row["id"], _normalize(row["name"])) for row in get_books()
@@ -227,16 +244,6 @@ def get_books():
     return rows
 
 
-def get_verse_count(book_id: int, chapter: int) -> int:
-    conn = get_connection()
-    count = conn.execute(
-        "SELECT COUNT(*) FROM bible_verses WHERE book_id = ? AND chapter = ?",
-        (book_id, chapter),
-    ).fetchone()[0]
-    conn.close()
-    return count
-
-
 def get_chapter(book_id: int, chapter: int):
     """Tous les versets (verse, text) d'un chapitre, dans l'ordre."""
     conn = get_connection()
@@ -256,6 +263,7 @@ _search_cache = None
 
 def _search_rows():
     global _search_cache
+    _check_db_changed()
     if _search_cache is None:
         conn = get_connection()
         rows = conn.execute(

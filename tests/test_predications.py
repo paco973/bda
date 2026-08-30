@@ -107,6 +107,42 @@ def _load_scraper():
     return module
 
 
+def test_recherche_dans_les_paragraphes():
+    """Recherche plein texte dans le contenu des prédications : accents et casse
+    ignorés, expression exacte, seuil de 3 caractères."""
+    predications.import_data({
+        "predications": [
+            {"date_code": "60-0101", "title_fr": "Alpha", "title_en": "",
+             "paragraphs": ["Le Saint-Esprit descendit", "Rien à voir ici"]},
+            {"date_code": "61-0202", "title_fr": "Éveil", "title_en": "",
+             "paragraphs": ["Ainsi parle l'Éternel", "Encore le saint esprit"]},
+        ]
+    })
+
+    trouves = predications.search_paragraphs("saint-esprit")
+    assert [(r["title_fr"], r["number"]) for r in trouves] == [("Alpha", 1), ("Éveil", 2)]
+    # La lettre et le préfixe accompagnent le résultat : le panneau y navigue
+    # sans requête supplémentaire.
+    assert (trouves[0]["letter"], trouves[0]["prefix"]) == ("A", "Al")
+    assert (trouves[1]["letter"], trouves[1]["prefix"]) == ("E", "Ev")
+
+    # Accents et casse indifférents, dans la requête comme dans le texte.
+    assert len(predications.search_paragraphs("eternel")) == 1
+    assert len(predications.search_paragraphs("ÉTERNEL")) == 1
+
+    # Expression exacte : les mots doivent se suivre.
+    assert predications.search_paragraphs("saint descendit") == []
+
+    # Sous trois caractères utiles, on ne cherche pas (trop de bruit).
+    assert predications.search_paragraphs("le") == []
+    assert predications.search_paragraphs("  ?  ") == []
+
+    # Un réimport renumérote les paragraphes : l'index doit suivre.
+    predications.import_data(SAMPLE)
+    assert predications.search_paragraphs("saint-esprit") == []
+    assert len(predications.search_paragraphs("Trois")) == 1
+
+
 def test_parse_index():
     scraper = _load_scraper()
     html = (
@@ -260,6 +296,32 @@ def test_decoupage_paragraphes_selon_la_place(qapp):
     assert panel._paragraph == 2 and panel._part == 0
 
 
+def test_changer_de_predication_ne_reprend_pas_l_ancien_texte(qapp):
+    """Les morceaux découpés sont indexés par numéro de paragraphe : deux
+    prédications ont toutes deux un §1. Sans propriétaire, le cache projetait le
+    texte de la prédication précédente."""
+    predications.import_data({
+        "predications": [
+            {"date_code": "60-0101", "title_fr": "Alpha", "title_en": "",
+             "paragraphs": ["AAA premier", "AAA second"]},
+            {"date_code": "61-0202", "title_fr": "Beta", "title_en": "",
+             "paragraphs": ["BBB premier", "BBB second"]},
+        ]
+    })
+    from logos.ui.predication_panel import PredicationPanel
+
+    panel = PredicationPanel()
+    alpha = predications.list_by_prefix("Al")[0]["id"]
+    beta = predications.list_by_prefix("Be")[0]["id"]
+
+    panel._select_predication(alpha)
+    assert panel.current_deck()[0][0].startswith("AAA premier")
+    panel._select_predication(beta)
+    assert panel.current_deck()[0][0].startswith("BBB premier")
+    panel._select_predication(alpha)          # et le retour reste juste
+    assert panel.current_deck()[0][0].startswith("AAA premier")
+
+
 def test_projection_partielle_d_un_paragraphe(qapp):
     """Sélectionner un passage du paragraphe fait démarrer la projection à cet
     endroit (« … »), comme dans le mode Bible."""
@@ -338,6 +400,42 @@ def test_partielle_redecoupe_le_seul_paragraphe_vise(qapp):
         assert decoupages == []
     finally:
         module.slides.split_to_fit = vrai_split
+
+
+def test_recherche_plein_texte_du_panneau(qapp):
+    """Le second champ cherche dans les paragraphes ; cliquer un résultat rejoint
+    la prédication — même si elle est sous une autre lettre — et son paragraphe."""
+    from PySide6.QtCore import Qt
+    predications.import_data({
+        "predications": [
+            {"date_code": "60-0101", "title_fr": "Alpha", "title_en": "",
+             "paragraphs": ["Premier", "Deuxième"]},
+            {"date_code": "61-0202", "title_fr": "Zacharie", "title_en": "",
+             "paragraphs": ["Rien", "Le Saint-Esprit descendit sur eux"]},
+        ]
+    })
+    from logos.ui.predication_panel import PredicationPanel
+
+    panel = PredicationPanel()
+    assert panel._letter == "A"          # on démarre ailleurs que la cible
+
+    panel.text_search_edit.setText("saint-esprit")
+    panel._run_text_search()             # sans attendre l'anti-rebond
+    assert panel.text_results.count() == 1
+    item = panel.text_results.item(0)
+    assert "Zacharie" in item.text() and "§2" in item.text()
+
+    panel._on_text_result_clicked(item)
+    assert panel._letter == "Z"
+    assert panel._predication["title_fr"] == "Zacharie"
+    assert panel._paragraph == 2
+    assert not panel.text_results.isVisibleTo(panel)
+
+    # Requête sans correspondance : ligne d'information, non cliquable.
+    panel.text_search_edit.setText("zzzzzz")
+    panel._run_text_search()
+    assert panel.text_results.count() == 1
+    assert panel.text_results.item(0).data(Qt.UserRole) is None
 
 
 def test_panneau_indisponible(qapp):

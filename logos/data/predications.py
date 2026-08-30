@@ -16,10 +16,17 @@ simple (« Élie » -> lettre E, préfixe « El »).
 import gzip
 import hashlib
 import json
+import re
+import sqlite3
 import sys
 
 from logos import resources
-from logos.data.database import get_connection, get_meta, set_meta
+from logos.data.database import (
+    get_connection,
+    get_meta,
+    has_paragraph_search,
+    set_meta,
+)
 from logos.data.textutils import search_key, strip_accents
 from logos.resources import asset_path, bundled_asset_path
 
@@ -145,6 +152,110 @@ def import_data(data: dict):
         )
     conn.commit()
     conn.close()
+    # Les rowid ont changé (DELETE + INSERT) : l'index externe doit suivre.
+    rebuild_search_index()
+
+
+# --------------------------------------------------------------------------- #
+#  Recherche plein texte dans les paragraphes
+# --------------------------------------------------------------------------- #
+# Nombre de paragraphes présents dans l'index, retenu dans `meta`. Un index à
+# contenu externe ne peut pas être interrogé sur son propre remplissage (lire
+# ses colonnes ou ses rowid renvoie ceux de la table source, même s'il est vide) :
+# ce compteur est la seule façon fiable de savoir s'il est à jour.
+_INDEX_ROWS_KEY = "paragraph_index_rows"
+
+
+def _paragraph_count(conn) -> int:
+    return conn.execute("SELECT COUNT(*) FROM predication_paragraphs").fetchone()[0]
+
+
+def rebuild_search_index():
+    """(Re)construit l'index plein texte des paragraphes (~3 s sur le corpus
+    complet). L'index est *externe* : il pointe vers les `rowid` de
+    `predication_paragraphs`, qu'un import renumérote entièrement."""
+    if not has_paragraph_search():
+        return
+    conn = get_connection()
+    try:
+        conn.execute("INSERT INTO paragraph_search(paragraph_search) VALUES('delete-all')")
+        conn.execute(
+            "INSERT INTO paragraph_search(rowid, text) SELECT rowid, text"
+            " FROM predication_paragraphs"
+        )
+        conn.commit()
+        total = _paragraph_count(conn)
+    except sqlite3.OperationalError as exc:
+        print(f"BDA : index plein texte non reconstruit ({exc}).", file=sys.stderr)
+        return
+    finally:
+        conn.close()
+    set_meta(_INDEX_ROWS_KEY, str(total))
+
+
+def _search_index_ready() -> bool:
+    """L'index est-il utilisable ? Le construit s'il est vide alors que des
+    paragraphes existent — cas d'un poste dont la base date d'avant cette
+    fonctionnalité : le corpus n'a pas changé, donc rien ne déclencherait de
+    réimport, et la recherche resterait muette."""
+    if not has_paragraph_search():
+        return False
+    conn = get_connection()
+    try:
+        total = _paragraph_count(conn)
+    finally:
+        conn.close()
+    if not total:
+        return False        # corpus absent : rien à indexer
+    if get_meta(_INDEX_ROWS_KEY) == str(total):
+        return True
+    rebuild_search_index()  # première recherche sur une base d'avant : ~3 s
+    return get_meta(_INDEX_ROWS_KEY) == str(total)
+
+
+# Mots de la requête : on ne reprend que les suites de lettres et de chiffres.
+# La saisie de l'opérateur ne doit jamais être interprétée comme de la syntaxe
+# FTS5 (guillemets, `*`, `NEAR`, `OR`…) : elle est retokenisée puis remise entre
+# guillemets, ce qui en fait une recherche d'expression exacte.
+_WORDS = re.compile(r"\w+", re.UNICODE)
+
+
+def search_paragraphs(query: str, limit: int = 50):
+    """Paragraphes contenant l'expression `query` (accents et casse ignorés).
+
+    Retourne au plus `limit` dicts {predication_id, date_code, title_fr, letter,
+    prefix, number, text}, dans l'ordre du corpus — `letter` et `prefix`
+    permettent au panneau de rejoindre la prédication sans requête de plus. Liste vide sous 3 caractères utiles, comme la
+    recherche dans les versets, et si l'index n'est pas disponible.
+    """
+    mots = _WORDS.findall(query or "")
+    if not mots or len("".join(mots)) < 3:
+        return []
+    expression = '"' + " ".join(mots) + '"'
+    if not _search_index_ready():
+        return []
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT p.predication_id AS predication_id, p.number AS number,
+                   p.text AS text, d.date_code AS date_code, d.title_fr AS title_fr,
+                   d.letter AS letter, d.prefix AS prefix
+            FROM paragraph_search s
+            JOIN predication_paragraphs p ON p.rowid = s.rowid
+            JOIN predications d ON d.id = p.predication_id
+            WHERE paragraph_search MATCH ?
+            ORDER BY s.rowid
+            LIMIT ?
+            """,
+            (expression, limit),
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        print(f"BDA : recherche plein texte impossible ({exc}).", file=sys.stderr)
+        return []
+    finally:
+        conn.close()
+    return [dict(row) for row in rows]
 
 
 # --------------------------------------------------------------------------- #

@@ -4,10 +4,15 @@ Fenêtre principale : page d'accueil et modes Bible et Prédications.
 Chaque mode embarque son propre poste de contrôle (`ProjectionControls`).
 Un `ProjectionController` partagé possède l'unique fenêtre de projection.
 """
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QRunnable, QThreadPool, Qt, Signal
 from PySide6.QtGui import QGuiApplication, QAction, QKeySequence
 from PySide6.QtWidgets import (
+    QAbstractButton,
+    QAbstractItemView,
+    QApplication,
+    QComboBox,
     QMainWindow,
+    QSpinBox,
     QWidget,
     QFrame,
     QHBoxLayout,
@@ -26,7 +31,7 @@ from logos.ui import theme
 from logos.ui.bible_panel import BiblePanel
 from logos.ui.predication_panel import PredicationPanel
 from logos.ui.update_banner import UpdateBanner, check_async
-from logos.ui.widgets import circular_logo
+from logos.ui.widgets import circular_logo, section_title
 from logos.ui.projection_controller import ProjectionController
 from logos.ui.projection_controls import ProjectionControls, ProjectionSettingsBar
 from logos.version import __version__
@@ -158,6 +163,10 @@ class ControlWindow(QMainWindow):
         app.screenAdded.connect(lambda _s: self.controller.refresh_screens())
         app.screenRemoved.connect(lambda _s: self.controller.refresh_screens())
 
+        # Les touches de présentation sont captées avant le widget focalisé
+        # (voir `eventFilter`) : sans cela, elles ne survivent pas au premier clic.
+        QApplication.instance().installEventFilter(self)
+
         self._check_updates_on_startup()
 
     def _fit_key(self):
@@ -284,11 +293,7 @@ class ControlWindow(QMainWindow):
         )
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(16, 16, 16, 16)
-        title = QLabel("Projection")
-        title.setStyleSheet(
-            f"color:{theme.COLOR_TEXT_MUTED}; font-size:11px; font-weight:700;"
-            f" letter-spacing:2px; background:transparent;"
-        )
+        title = section_title("Projection")
         side_layout.addWidget(title)
         side_layout.addWidget(controls)
         page.layout().addWidget(side)
@@ -312,10 +317,7 @@ class ControlWindow(QMainWindow):
         self.bible_panel.verses_spin.valueChanged.connect(self._on_verses_per_slide)
         layout.addWidget(self.bible_panel, 1)
 
-        # Pas de bouton « Projeter » ici : le navigateur a « Projeter le verset ».
-        self.bible_controls = ProjectionControls(
-            self.controller, "bible", "Bible", show_project_button=False
-        )
+        self.bible_controls = ProjectionControls(self.controller, "bible", "Bible")
         self.bible_controls.index_changed.connect(self._on_bible_controls_index)
         self._add_mode_side(page, self.bible_controls)
 
@@ -338,9 +340,8 @@ class ControlWindow(QMainWindow):
         self.predication_panel.project_requested.connect(self._on_predication_project)
         layout.addWidget(self.predication_panel, 1)
 
-        # Projection via « Projeter le paragraphe » du navigateur (pas de doublon).
         self.predication_controls = ProjectionControls(
-            self.controller, "predication", "Prédications", show_project_button=False
+            self.controller, "predication", "Prédications"
         )
         self.predication_controls.index_changed.connect(self._on_predication_controls_index)
         self._add_mode_side(page, self.predication_controls)
@@ -407,14 +408,25 @@ class ControlWindow(QMainWindow):
     # ---------- Navigation entre pages ----------
     def _open_bible(self):
         self._ensure_bible_page()
-        self.stack.setCurrentWidget(self.bible_page)
+        self._show_page(self.bible_page)
 
     def _open_predications(self):
         self._ensure_predication_page()
-        self.stack.setCurrentWidget(self.predication_page)
+        self._show_page(self.predication_page)
 
     def _go_home(self):
-        self.stack.setCurrentWidget(self.home_page)
+        self._show_page(self.home_page)
+
+    def _show_page(self, page):
+        """Affiche une page et libère le focus d'un éventuel champ de saisie.
+
+        Un champ garde légitimement les flèches (voir `eventFilter`) : en
+        changeant de page, on ne veut pas que celui qu'on vient de quitter
+        continue de les capter."""
+        focused = QApplication.focusWidget()
+        if isinstance(focused, QLineEdit):
+            focused.clearFocus()
+        self.stack.setCurrentWidget(page)
 
     def _active_controls(self):
         """Poste de contrôle du mode affiché (ou None sur l'accueil)."""
@@ -498,22 +510,58 @@ class ControlWindow(QMainWindow):
             event.accept()
             return
 
-        controls = self._active_controls()
-        if controls is not None:
-            key = event.key()
-            if key in (Qt.Key_Right, Qt.Key_Down, Qt.Key_PageDown, Qt.Key_Space):
-                controls.go_next()
-                event.accept()
-                return
-            if key in (Qt.Key_Left, Qt.Key_Up, Qt.Key_PageUp):
-                controls.go_prev()
-                event.accept()
-                return
-            if key == Qt.Key_B:
-                controls.toggle_blackout()
-                event.accept()
-                return
+        if self._presentation_key(event.key()):
+            event.accept()
+            return
         super().keyPressEvent(event)
+
+    # ---------- Touches de présentation ----------
+    def _presentation_key(self, key) -> bool:
+        """Exécute l'action de présentation liée à `key`. False si aucune."""
+        controls = self._active_controls()
+        if controls is None:
+            return False
+        if key in (Qt.Key_Right, Qt.Key_Down, Qt.Key_PageDown, Qt.Key_Space):
+            controls.go_next()
+            return True
+        if key in (Qt.Key_Left, Qt.Key_Up, Qt.Key_PageUp):
+            controls.go_prev()
+            return True
+        if key == Qt.Key_B:
+            controls.toggle_blackout()
+            return True
+        return False
+
+    def eventFilter(self, obj, event):
+        """Capte les touches de présentation **avant** le widget focalisé.
+
+        `keyPressEvent` ne voit que les touches dont personne n'a voulu, et les
+        widgets qui ont le focus en usage courant mangent justement les flèches :
+        une ligne de lecture, une case numérotée, une zone défilante. Après un
+        clic sur un verset — le geste le plus fréquent — les flèches ne faisaient
+        donc rien. Pire, le sélecteur d'écran a le focus à l'ouverture d'un mode :
+        ↓ y changeait l'écran de projection en plein culte.
+
+        Les widgets dont les flèches ont un usage propre gardent la main : champs
+        de saisie, compteurs, listes de résultats, sélecteur d'écran une fois
+        cliqué. Un modificateur enfoncé laisse aussi passer (Ctrl+←/→ reste géré
+        par les `QAction`).
+        """
+        if event.type() != QEvent.KeyPress:
+            return False
+        if QApplication.activeModalWidget() is not None:
+            return False       # une boîte de dialogue a la main
+        # Pas de garde sur la fenêtre au premier plan : la seule autre fenêtre
+        # de l'application est celle de projection, affichée en plein écran, et
+        # les flèches doivent y agir aussi (elle n'a aucun widget focalisable).
+        if event.modifiers() not in (Qt.NoModifier, Qt.KeypadModifier):
+            return False
+        focused = QApplication.focusWidget()
+        if isinstance(focused, (QLineEdit, QSpinBox, QComboBox, QAbstractItemView)):
+            return False
+        if event.key() == Qt.Key_Space and isinstance(focused, QAbstractButton):
+            return False       # Espace doit continuer d'actionner un bouton
+        return self._presentation_key(event.key())
 
     def _show_shortcuts(self):
         QMessageBox.information(

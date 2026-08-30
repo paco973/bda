@@ -34,8 +34,10 @@ from logos.ui.widgets import (
     NumButton,
     NumberedTextRow,
     ProgressiveRows,
+    TOPBAR_LOGO_SIZE,
     circular_logo,
     clear_layout,
+    section_title,
 )
 
 # Chiffres en exposant Unicode : préfixent chaque verset dans le texte projeté
@@ -165,6 +167,7 @@ class BiblePanel(QWidget):
         self._verses_per_slide = 1  # nombre MAX de versets regroupés par diapositive
         self._fits = None           # prédicat (texte)->bool : le texte tient-il à l'écran ?
         self._group_cache = {}      # pos -> groupe complet (pavage mémorisé)
+        self._group_cache_key = None  # état dont ce pavage dépend
 
         self._build_ui()
 
@@ -206,11 +209,11 @@ class BiblePanel(QWidget):
         back_btn.clicked.connect(self.close_requested.emit)
         row.addWidget(back_btn)
 
-        logo = circular_logo(34)
+        logo = circular_logo(TOPBAR_LOGO_SIZE)
         if logo is not None:
             logo_label = QLabel()
             logo_label.setPixmap(logo)
-            logo_label.setFixedSize(34, 34)
+            logo_label.setFixedSize(TOPBAR_LOGO_SIZE, TOPBAR_LOGO_SIZE)
             row.addWidget(logo_label)
 
         title = QLabel(theme.APP_NAME)
@@ -328,11 +331,7 @@ class BiblePanel(QWidget):
         header_col = QVBoxLayout(header)
         header_col.setContentsMargins(20, 16, 20, 12)
         header_col.setSpacing(3)
-        self.testament_label = QLabel("")
-        self.testament_label.setStyleSheet(
-            f"color:{theme.BRONZE}; font-size:11px; font-weight:700;"
-            f" letter-spacing:2px; background:transparent;"
-        )
+        self.testament_label = section_title(subdued=True)
         self.reference_label = QLabel("")
         self.reference_label.setStyleSheet(
             f"color:{theme.COLOR_TEXT}; font-size:22px; font-weight:700; background:transparent;"
@@ -398,11 +397,7 @@ class BiblePanel(QWidget):
         books_col = QVBoxLayout(books_wrap)
         books_col.setContentsMargins(22, 18, 22, 14)
         books_col.setSpacing(10)
-        books_title = QLabel("Livres")
-        books_title.setStyleSheet(
-            f"color:{theme.COLOR_TEXT_MUTED}; font-size:11px; font-weight:700;"
-            f" letter-spacing:2px; background:transparent;"
-        )
+        books_title = section_title("Livres")
         books_col.addWidget(books_title)
 
         books_scroll = QScrollArea()
@@ -439,11 +434,7 @@ class BiblePanel(QWidget):
         chap_col.setSpacing(10)
         chap_head = QHBoxLayout()
         chap_head.setSpacing(8)
-        chap_title = QLabel("Chapitre")
-        chap_title.setStyleSheet(
-            f"color:{theme.BRONZE}; font-size:11px; font-weight:700;"
-            f" letter-spacing:2px; background:transparent;"
-        )
+        chap_title = section_title("Chapitre", subdued=True)
         self.chapter_book_label = QLabel("")
         self.chapter_book_label.setStyleSheet(
             f"color:{theme.COLOR_TEXT}; font-size:13px; font-weight:700; background:transparent;"
@@ -467,11 +458,7 @@ class BiblePanel(QWidget):
         verse_col = QVBoxLayout(verse_wrap)
         verse_col.setContentsMargins(18, 14, 18, 14)
         verse_col.setSpacing(10)
-        verse_title = QLabel("Verset")
-        verse_title.setStyleSheet(
-            f"color:{theme.BRONZE}; font-size:11px; font-weight:700;"
-            f" letter-spacing:2px; background:transparent;"
-        )
+        verse_title = section_title("Verset", subdued=True)
         verse_col.addWidget(verse_title)
         verse_scroll = QScrollArea()
         verse_scroll.setWidgetResizable(True)
@@ -620,10 +607,6 @@ class BiblePanel(QWidget):
         self._update_status_texts()
         self.selection_changed.emit()
 
-    def select_verse(self, verse):
-        """Sélection d'un verset depuis l'extérieur (navigation du poste)."""
-        self._select_verse(verse)
-
     def set_fit_predicate(self, fits):
         """Injecte un prédicat `(texte)->bool` : le texte tient-il dans la
         projection ? Utilisé pour ne regrouper que les versets qui rentrent."""
@@ -636,12 +619,23 @@ class BiblePanel(QWidget):
         self._reset_group_cache()
 
     def _reset_group_cache(self):
-        """Vide le pavage mémorisé.
+        """Vide le pavage mémorisé et force sa reconstruction."""
+        self._group_cache = {}
+        self._group_cache_key = None
 
-        Il est désactivé (None) tant qu'une sélection partielle est active : le
-        rendu d'un groupe dépend alors du verset sélectionné, donc du contexte,
-        et n'est plus mémorisable par simple position."""
-        self._group_cache = {} if self._partial_start == 0 else None
+    def _group_key(self):
+        """Ce dont dépend le pavage : le chapitre, le nombre de versets par
+        diapositive, et — seulement pendant une sélection partielle — le verset
+        visé et son point de départ (le rendu d'un groupe en dépend alors).
+
+        Sans sélection partielle, la clé ne bouge pas d'un verset à l'autre :
+        le pavage reste mémorisé. Même mécanique que `_deck_key()` côté
+        prédications."""
+        book = self._book["id"] if self._book else None
+        if not self._partial_start:
+            return (book, self._chapter, self._verses_per_slide, None, 0)
+        return (book, self._chapter, self._verses_per_slide,
+                self._verse, self._partial_start)
 
     def select_slide(self, index: int):
         """Sélection d'une diapositive (groupe de versets) par son index."""
@@ -692,7 +686,11 @@ class BiblePanel(QWidget):
 
     def _full_group_from(self, pos: int):
         """`_group_from(pos, fin du chapitre)`, mémorisé (voir `invalidate_deck`)."""
-        if self._group_cache is not None and pos in self._group_cache:
+        key = self._group_key()
+        if key != self._group_cache_key:
+            self._group_cache = {}
+            self._group_cache_key = key
+        if pos in self._group_cache:
             return self._group_cache[pos]
         verses = self._chapter_verses
         end = len(verses)
@@ -705,8 +703,7 @@ class BiblePanel(QWidget):
                 break
             group.append(verses[k])
             k += 1
-        if self._group_cache is not None:
-            self._group_cache[pos] = group
+        self._group_cache[pos] = group
         return group
 
     def _page(self, start: int, end: int):
@@ -741,11 +738,8 @@ class BiblePanel(QWidget):
         return [v for v, _t in self._group_from(pos, len(verses))]
 
     def _select_verse(self, verse):
-        if verse != self._verse and self._partial_start:
-            # La sélection partielle suit son verset ; en la quittant, le pavage
-            # cesse de dépendre du verset choisi et redevient mémorisable.
-            self._partial_start = 0
-            self._reset_group_cache()
+        if verse != self._verse:
+            self._partial_start = 0  # la sélection partielle suit son verset
         self._verse = verse
         group = set(self._group_verses(verse))
         for v, row in getattr(self, "_verse_rows", {}).items():
@@ -771,8 +765,6 @@ class BiblePanel(QWidget):
         if partial == self._partial_start:
             return
         self._partial_start = partial
-        # Le rendu des groupes dépend maintenant du verset sélectionné.
-        self._reset_group_cache()
         self._update_status_texts()
         self.selection_changed.emit()  # recharge l'aperçu (et le direct si à l'antenne)
 
@@ -969,19 +961,6 @@ class BiblePanel(QWidget):
             self.status_right.setText(status)
         else:
             self.status_right.setText("Sélectionnez un verset")
-
-    # ------------------------- Passage courant ---------------------------- #
-    def current_passage(self):
-        """(label, texte projetable) du verset sélectionné (verset 1 par défaut)."""
-        if self._book is None:
-            return None
-        verse = self._verse or 1
-        rows = bible.get_passage(self._book["id"], self._chapter, verse, verse)
-        if not rows:
-            return None
-        label = slides.passage_label(self._book["name"], self._chapter, verse, verse)
-        content = slides.passage_to_text(self._book["name"], self._chapter, rows)
-        return label, content
 
     # ----------------------------- Signaux -------------------------------- #
     def _on_project_clicked(self):

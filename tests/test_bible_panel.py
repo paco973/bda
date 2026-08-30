@@ -34,12 +34,10 @@ def test_selection_d_un_verset(qapp):
     panel._select_chapter(3)
     panel._select_verse(16)
 
-    label, content = panel.current_passage()
-    assert label == "Jean 3:16"
-    slides = content.split("\n\n")
-    assert len(slides) == 1
-    assert "Dieu a tant aimé le monde" in slides[0]
-    assert slides[0].endswith("Jean 3:16")
+    # Le texte projetable passe par le jeu de diapositives (chemin réel).
+    deck, index = panel.current_deck()
+    assert "Dieu a tant aimé le monde" in deck[index]
+    assert deck[index].endswith("Jean 3:16")
 
 
 def test_defaut_actes_et_recherche(qapp):

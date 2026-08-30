@@ -662,7 +662,13 @@ cython_debug/
 
 # Corpus de prédications : contenu sous copyright (branham.fr / VGR), à ne
 # jamais publier avec le code. Chaque poste le reçoit via ~/.bda/assets/.
-#logos/assets/predications.json.gz
+# Cette règle était commentée : le fichier a donc été suivi par git. La
+# décommenter empêche un nouvel ajout, mais ne retire pas ce qui est déjà
+# indexé — voir « git rm --cached » dans le README.
+logos/assets/predications.json.gz
+
+# Métadonnées Finder (macOS), sans intérêt pour le dépôt.
+.DS_Store
 
 # Le motif « [Ss]cripts » plus haut vient du modèle Visual Studio, où il vise le
 # dossier Scripts/ d'un virtualenv Windows (déjà couvert ici par .venv). Il

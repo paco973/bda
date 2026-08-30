@@ -11,16 +11,6 @@ def passage_label(book_name: str, chapter: int, verse_start: int, verse_end: int
     return f"{book_name} {chapter}:{verse_start}"
 
 
-def passage_to_text(book_name: str, chapter: int, verses) -> str:
-    """Met en forme un passage en texte projetable : une diapositive par verset
-    (texte + référence)."""
-    slides = [
-        f"{text}\n{book_name} {chapter}:{verse}"
-        for verse, text in verses
-    ]
-    return "\n\n".join(slides)
-
-
 def _fit_count(words, start, fits, guess) -> int:
     """Nombre de mots (>= 1) à partir de `start` qui satisfont `fits`.
 

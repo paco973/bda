@@ -1,7 +1,8 @@
-# Logos Tabernacle
+# BDA — Logos Tabernacle
 
-Application de bureau de présentation pour l'église : l'opérateur pilote, depuis
-un poste de contrôle, l'affichage des paroles de chants sur un second écran
+Application de bureau de présentation pour l'église Logos Tabernacle :
+l'opérateur pilote, depuis un poste de contrôle, l'affichage de **passages
+bibliques** et de **paragraphes de prédications** sur un second écran
 (vidéoprojecteur) pendant le culte. Fonctionne 100 % hors ligne.
 
 ## Installation
@@ -15,30 +16,78 @@ python main.py
 
 ## Utilisation
 
-1. **Créer un chant** (onglet Chants) : bouton « Nouveau », saisir le titre et
-   les paroles. Laisser une **ligne vide** entre chaque diapositive, puis
-   « Enregistrer le chant ».
-2. **Versets bibliques** (onglet Bible) : choisir livre, chapitre et plage de
-   versets (Louis Segond 1910 incluse, une diapositive par verset avec sa
-   référence), puis « Afficher les diapositives » ou « Ajouter au culte ».
-3. **Préparer l'ordre du culte** : ajouter chants et passages avec « Ajouter au
-   culte », réordonner avec ▲ ▼. La liste est sauvegardée et retrouvée au
-   prochain lancement. Pendant le culte, cliquer un élément charge ses
-   diapositives.
-4. **Choisir l'écran de projection** dans la liste déroulante (le vidéoprojecteur
-   est proposé par défaut), puis « Démarrer la projection ».
-5. **Projeter** : cliquer une diapositive dans la liste, ou utiliser les boutons
-   « ◀ Précédent / Suivant ▶ » (les flèches du clavier fonctionnent quand la
-   liste des diapositives a le focus).
-6. **Écran noir** : masque le texte projeté sans le perdre (moments de prière,
-   prédication…). Recliquer ou projeter une diapo pour réafficher.
+L'application s'ouvre sur un **accueil** proposant deux modes — **Bible** et
+**Prédications** — plus « À propos ». Le bouton « ‹ Retour » de chaque mode
+ramène à l'accueil.
 
-La section « Projection » affiche un **aperçu en direct** de ce que voit
-l'assemblée, un indicateur d'état (arrêtée / en direct / écran noir) et le
-compteur de diapositives.
+### Mode Bible
 
-Tout est sauvegardé localement dans `~/.holyrics_clone/songs.db` (chants, ordre
-du culte et texte biblique — l'application fonctionne 100 % hors ligne).
+1. **Choisir le passage** : cliquer un livre dans la grille (colorée par groupe
+   canonique), puis un chapitre et un verset. Le verset choisi se surligne dans
+   la colonne de lecture, à gauche.
+2. **Aller plus vite** : la barre du haut accepte un nom de livre **ou une
+   référence** — « Jean 3:16 », « 1 co 13 » — et saute directement au passage.
+   Le second champ cherche dans le **texte des versets** ; cliquer un résultat
+   y amène.
+3. **Projeter** : « Projeter le verset ». Le réglage « Versets par diapositive »
+   (1 à 20) regroupe les versets consécutifs, sans jamais dépasser ce qui tient
+   réellement à l'écran.
+
+### Mode Prédications
+
+Choisir une **lettre**, un **préfixe** à deux lettres, puis la prédication dans
+la liste ; la colonne de gauche affiche ses paragraphes numérotés. « Projeter le
+paragraphe » l'envoie à l'écran ; un paragraphe trop long est automatiquement
+découpé en plusieurs diapositives (« 1/3 », « 2/3 »…).
+
+La barre du haut offre **deux recherches** : la première par **titre ou code
+date** (« 62-0123 ») filtre la liste ; la seconde cherche **dans le texte des
+paragraphes** — taper « le Saint-Esprit » liste les passages qui contiennent
+l'expression, et cliquer un résultat y amène directement, quelle que soit la
+lettre où se trouve la prédication. Accents et majuscules sont indifférents.
+
+> La première recherche dans les paragraphes construit un index (quelques
+> secondes, une seule fois) ; les suivantes sont instantanées.
+
+Le corpus n'est pas livré avec l'application (contenu sous copyright) : sans
+lui, le mode affiche « non disponible » et propose de le télécharger.
+
+### Démarrer au milieu d'un verset ou d'un paragraphe
+
+**Sélectionner un passage à la souris** dans la colonne de lecture fait démarrer
+la projection à cet endroit — le texte projeté commence alors par « … ».
+Recliquer sans sélectionner revient au texte entier.
+
+### Projection
+
+La colonne « Projection », à droite, montre un **aperçu en direct** de ce que
+voit l'assemblée, l'état (arrêtée / à l'antenne), le compteur de diapositives et
+les boutons ◀ ▶, « Écran noir » et « Arrêter ». Un seul mode est à l'antenne à
+la fois : projeter depuis l'autre coupe le premier.
+
+En bas de la fenêtre, l'**écran de projection** et la **taille du texte** valent
+pour toute l'application. Ces réglages, comme les versets par diapositive, sont
+retrouvés au lancement suivant.
+
+### Raccourcis clavier
+
+| Touche | Action |
+|---|---|
+| `F5` | Projeter |
+| `F6` ou `B` | Écran noir |
+| `Échap` ou `Maj+F5` | Quitter la présentation |
+| `→` `↓` `PgSuiv` `Espace` ou `Ctrl+→` | Diapositive suivante |
+| `←` `↑` `PgPréc` ou `Ctrl+←` | Diapositive précédente |
+| `Ctrl+H` · `F2` · `F4` | Accueil · Bible · Prédications |
+
+Les flèches fonctionnent quel que soit l'endroit cliqué en dernier. Elles
+gardent leur rôle habituel dans un champ de recherche, un compteur (taille du
+texte, versets par diapositive), le sélecteur d'écran et une liste de résultats.
+`Échap` vide d'abord un champ de recherche rempli, puis quitte la présentation.
+Le menu **Aide → Raccourcis clavier** rappelle cette liste.
+
+Tout est stocké localement dans `~/.bda/` (base `bda.db`, contenu déposé dans
+`assets/`) : l'application n'a besoin d'aucune connexion pour fonctionner.
 
 ## Mettre à jour
 

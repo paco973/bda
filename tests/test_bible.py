@@ -48,8 +48,8 @@ def test_livres_et_compteurs():
     books = bible.get_books()
     assert [b["name"] for b in books] == ["Genèse", "Jean"]
     assert books[0]["chapters"] == 2
-    assert bible.get_verse_count(1, 1) == 2
-    assert bible.get_verse_count(1, 2) == 1
+    assert len(bible.get_chapter(1, 1)) == 2
+    assert len(bible.get_chapter(1, 2)) == 1
 
 
 def test_passage():
@@ -59,17 +59,28 @@ def test_passage():
     assert bible.get_passage(1, 1, 99, 99) == []
 
 
-def test_label_et_texte_projetable():
+def test_label_de_passage():
     assert slides.passage_label("Jean", 3, 16, 16) == "Jean 3:16"
     assert slides.passage_label("Jean", 3, 16, 18) == "Jean 3:16-18"
+
+
+def test_caches_suivent_la_base(tmp_path, monkeypatch):
+    """Les caches mémoire (noms de livres, recherche plein texte) sont liés à la
+    base ouverte : `DB_PATH` change d'un test à l'autre, et un cache qui lui
+    survivrait décrirait un corpus qui n'est plus celui interrogé."""
     bible.import_data(SAMPLE)
-    verses = bible.get_passage(1, 1, 1, 2)
-    text = slides.passage_to_text("Genèse", 1, verses)
-    # Une diapositive par verset, référence sur la dernière ligne
-    parts = text.split("\n\n")
-    assert len(parts) == 2
-    assert parts[0].endswith("Genèse 1:1")
-    assert parts[1].startswith("La terre était informe")
+    assert bible.parse_reference("gen") == (1, None, None)
+    assert len(bible.search_verses("commencement")) == 2   # Genèse 1:1 et Jean 1:1
+
+    autre = {"books": [{"nr": 66, "name": "Apocalypse", "chapters": [
+        {"chapter": 1, "verses": [{"verse": 1, "text": "Révélation de Jésus-Christ"}]}]}]}
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "autre.db")
+    database.init_db()
+    bible.import_data(autre)
+
+    assert bible.parse_reference("genese") is None      # Genèse n'existe plus
+    assert bible.parse_reference("apocalypse") == (66, None, None)
+    assert bible.search_verses("commencement") == []
 
 
 def test_groupes_canoniques():
