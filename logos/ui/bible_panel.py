@@ -53,10 +53,17 @@ def _superscript(number: int) -> str:
     return "".join(_SUPERSCRIPT[d] for d in str(number))
 
 
-# Taille du nom complet sur une carte de livre. Sert à la fois au style et à
-# l'élision : les deux doivent employer la même, sinon le nom est tronqué selon
-# une police qui n'est pas celle affichée (et qui varie d'un système à l'autre).
+# Carte d'un livre : taille, marge intérieure, et taille du nom complet.
+# `_BOOK_NAME_PX` sert à la fois au style et à l'élision : les deux doivent
+# employer la même, sinon le nom est tronqué selon une police qui n'est pas
+# celle affichée (et qui varie d'un système à l'autre). La largeur d'élision
+# se déduit de la carte plutôt que d'être fixée à part, pour ne pas gâcher
+# quelques pixels — précieux là où la police système est large (Segoe UI).
+_BOOK_CARD_WIDTH = 76
+_BOOK_CARD_HEIGHT = 46
+_BOOK_CARD_MARGIN = 4
 _BOOK_NAME_PX = 9
+_BOOK_NAME_WIDTH = _BOOK_CARD_WIDTH - 2 * _BOOK_CARD_MARGIN
 
 # Répartition de la colonne de navigation entre la grille des livres (haut) et
 # les grilles chapitres/versets (bas) : le bas ne dépasse ni `_NAV_BOTTOM_MAX`
@@ -79,12 +86,12 @@ class _BookCard(QFrame):
     def __init__(self, book):
         super().__init__()
         self.book_id = book["id"]
-        self.setFixedSize(76, 46)
+        self.setFixedSize(_BOOK_CARD_WIDTH, _BOOK_CARD_HEIGHT)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip(book["name"])
 
         col = QVBoxLayout(self)
-        col.setContentsMargins(4, 5, 4, 5)
+        col.setContentsMargins(_BOOK_CARD_MARGIN, 5, _BOOK_CARD_MARGIN, 5)
         col.setSpacing(2)
         self.abbr_label = QLabel(bible.book_abbreviation(self.book_id))
         self.abbr_label.setAlignment(Qt.AlignCenter)
@@ -97,7 +104,7 @@ class _BookCard(QFrame):
         font = QFont(self.name_label.font())
         font.setPixelSize(_BOOK_NAME_PX)
         self.name_label.setText(
-            QFontMetrics(font).elidedText(book["name"], Qt.ElideRight, 66)
+            QFontMetrics(font).elidedText(book["name"], Qt.ElideRight, _BOOK_NAME_WIDTH)
         )
         col.addWidget(self.abbr_label)
         col.addWidget(self.name_label)

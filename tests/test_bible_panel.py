@@ -112,24 +112,40 @@ def test_pavage_memorise_et_invalide(qapp):
     assert len(serre) == len(panel._chapter_verses)  # un verset par diapositive
 
 
-def test_nom_de_livre_non_tronque_a_tort(qapp):
-    """Le nom est élidé avec la police réellement affichée (9 px), pas avec la
-    police par défaut du système : sinon des noms qui tiennent sont coupés, et
-    différemment sur macOS et sur Windows."""
-    bible.ensure_imported()
-    from logos.ui.bible_panel import BiblePanel
+def test_nom_de_livre_elide_avec_la_police_affichee(qapp):
+    """Le nom est élidé avec la police réellement affichée (9 px), et non avec
+    la police par défaut du système — plus grande, elle coupait des noms qui
+    tiennent, différemment sur macOS et sur Windows.
 
-    panel = BiblePanel()
-    noms = {
-        5: "Deutéronome",
-        13: "1 Chroniques",
-        25: "Lamentations",
-        55: "2 Timothée",
-    }
-    for book_id, attendu in noms.items():
-        affiche = panel._book_cards[book_id].name_label.text()
-        assert affiche == attendu, f"{attendu} affiché « {affiche} »"
-        assert "…" not in affiche
+    Le contrat vérifié ne dépend pas de la plateforme : le nom affiché tient
+    toujours dans la carte, et il n'est raccourci que lorsqu'il le faut. Élider
+    avec la police par défaut échoue sur ce second point partout où celle-ci
+    n'est pas en 9 px — c'est-à-dire partout.
+    """
+    from PySide6.QtGui import QFont, QFontMetrics
+    from PySide6.QtWidgets import QLabel
+    bible.ensure_imported()
+    from logos.ui import bible_panel as bp
+
+    panel = bp.BiblePanel()
+    police = QFont(QLabel().font())
+    police.setPixelSize(bp._BOOK_NAME_PX)
+    mesures = QFontMetrics(police)
+
+    entiers = 0
+    for book in panel._books:
+        affiche = panel._book_cards[book["id"]].name_label.text()
+        assert mesures.horizontalAdvance(affiche) <= bp._BOOK_NAME_WIDTH, (
+            f"« {affiche} » déborde de la carte"
+        )
+        if mesures.horizontalAdvance(book["name"]) <= bp._BOOK_NAME_WIDTH:
+            assert affiche == book["name"], (
+                f"{book['name']} tient pourtant, affiché « {affiche} »"
+            )
+            entiers += 1
+        else:
+            assert affiche.endswith("…")
+    assert entiers, "aucun nom affiché en entier : la mesure est suspecte"
 
 
 def test_repartition_de_la_colonne_de_navigation(qapp):
