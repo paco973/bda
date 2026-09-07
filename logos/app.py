@@ -1,6 +1,7 @@
 """
 Assemblage de l'application : initialise la base, applique le thème
 et lance la fenêtre de contrôle.
+p
 """
 import sys
 
