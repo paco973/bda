@@ -91,36 +91,26 @@ class _HomeCard(QFrame):
     def __init__(self, icon: str, title: str, description: str):
         super().__init__()
         self.setCursor(Qt.PointingHandCursor)
-        self.setFixedSize(260, 150)
+        self.setFixedSize(260, 158)
         self._apply_style(hover=False)
 
         col = QVBoxLayout(self)
         col.setContentsMargins(20, 18, 20, 18)
         col.setSpacing(6)
         icon_label = QLabel(icon)
-        icon_label.setStyleSheet("font-size:34px; background:transparent; border:none;")
+        icon_label.setObjectName("HomeIcon")
         title_label = QLabel(title)
-        title_label.setStyleSheet(
-            f"color:{theme.COLOR_TEXT}; font-size:17px; font-weight:700;"
-            f" background:transparent; border:none;"
-        )
+        title_label.setObjectName("HomeTitle")
         desc_label = QLabel(description)
         desc_label.setWordWrap(True)
-        desc_label.setStyleSheet(
-            f"color:{theme.BRONZE}; font-size:12px; font-weight:500;"
-            f" background:transparent; border:none;"
-        )
+        desc_label.setObjectName("HomeDescription")
         col.addWidget(icon_label)
         col.addWidget(title_label)
         col.addWidget(desc_label)
         col.addStretch()
 
     def _apply_style(self, hover: bool):
-        border = theme.COLOR_PRIMARY if hover else theme.COLOR_BORDER_SUBTLE
-        bg = theme.COLOR_SURFACE_ALT if hover else theme.COLOR_SURFACE
-        self.setStyleSheet(
-            f"_HomeCard {{ background:{bg}; border:1px solid {border}; border-radius:12px; }}"
-        )
+        self.setStyleSheet(theme.home_card_style(hover))
 
     def enterEvent(self, event):
         self._apply_style(hover=True)
@@ -287,10 +277,8 @@ class ControlWindow(QMainWindow):
         """Colonne « Projection » à droite d'une page de mode."""
         side = QFrame(page)
         side.setFixedWidth(300)
-        side.setStyleSheet(
-            f"background:{theme.COLOR_SURFACE};"
-            f" border-left:1px solid {theme.COLOR_BORDER_SUBTLE};"
-        )
+        side.setObjectName("ProjectionSide")
+        side.setStyleSheet(theme.projection_panel_style())
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(16, 16, 16, 16)
         title = section_title("Projection")
@@ -353,7 +341,7 @@ class ControlWindow(QMainWindow):
     def _build_home_page(self):
         page = QWidget()
         outer = QVBoxLayout(page)
-        outer.setContentsMargins(40, 40, 40, 40)
+        outer.setContentsMargins(32, 20, 32, 20)
         outer.addStretch()
 
         logo = circular_logo(_HOME_LOGO_SIZE)
@@ -367,22 +355,22 @@ class ControlWindow(QMainWindow):
             row.addWidget(logo_label)
             row.addStretch()
             outer.addLayout(row)
-            outer.addSpacing(18)
+            outer.addSpacing(10)
 
         title = QLabel(theme.APP_NAME)
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet(
             f"color:{theme.COLOR_TEXT}; font-size:34px; font-weight:700; background:transparent;"
         )
-        subtitle = QLabel("Logiciel de présentation pour l'église")
+        subtitle = QLabel("Logos Tabernacle · Votre espace de présentation")
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setStyleSheet(
-            f"color:{theme.BRONZE}; font-size:14px; font-weight:500; background:transparent;"
+            f"color:{theme.COLOR_TEXT_MUTED}; font-size:14px; font-weight:500; background:transparent;"
         )
         outer.addWidget(title)
         outer.addSpacing(4)
         outer.addWidget(subtitle)
-        outer.addSpacing(32)
+        outer.addSpacing(22)
 
         cards = [
             ("📖", "Bible", "Naviguer dans les livres et projeter des versets.",

@@ -39,8 +39,8 @@ COLOR_PRIMARY = GOLD              # accent principal (boutons, sélection)
 COLOR_PRIMARY_HOVER = GOLD_LIGHT
 COLOR_PRIMARY_PRESSED = GOLD_DARK
 COLOR_ON_PRIMARY_MUTED = "#5A4420"  # texte secondaire posé sur un fond doré
-COLOR_TEXT = GOLD_LIGHTEST        # texte principal sur fond sombre
-COLOR_TEXT_MUTED = GOLD_MID
+COLOR_TEXT = "#EDF2FA"           # lecture claire, or réservé aux accents
+COLOR_TEXT_MUTED = "#ABBBD2"
 COLOR_TEXT_DISABLED = "#6E5A38"   # texte inactif (lettres sans prédication…)
 COLOR_TEXT_ON_PRIMARY = BLACK     # texte sur bouton doré (contraste)
 COLOR_DANGER = "#B33A2E"          # pour actions destructrices (supprimer)
@@ -78,6 +78,26 @@ READING_FONT_FAMILY = "Georgia, 'Times New Roman', 'Noto Serif', serif"
 # avec le texte projeté en doré clair pour rappeler l'identité visuelle.
 PROJECTION_BACKGROUND = "#000000"
 PROJECTION_TEXT = GOLD_LIGHTEST
+
+
+def home_card_style(hover=False):
+    border = COLOR_PRIMARY if hover else COLOR_BORDER_SUBTLE
+    bg = COLOR_SURFACE_ALT if hover else COLOR_SURFACE
+    return (
+        f"_HomeCard {{ background:{bg}; border:1px solid {border}; border-radius:16px; }}"
+        f"_HomeCard QLabel {{ background:transparent; border:none; }}"
+        f"QLabel#HomeIcon {{ color:{COLOR_PRIMARY}; font-size:28px; }}"
+        f"QLabel#HomeTitle {{ color:{COLOR_TEXT}; font-size:19px; font-weight:700; }}"
+        f"QLabel#HomeDescription {{ color:{COLOR_TEXT_MUTED}; font-size:12px; font-weight:400; }}"
+    )
+
+
+def projection_panel_style():
+    return (
+        f"QFrame#ProjectionSide {{ background:{COLOR_SURFACE};"
+        f" border-left:1px solid {COLOR_BORDER_SUBTLE}; }}"
+        f"QFrame#ProjectionSide QWidget {{ background:transparent; }}"
+    )
 
 
 def build_stylesheet() -> str:
@@ -154,8 +174,8 @@ def build_stylesheet() -> str:
     /* ---------- Champs de saisie ---------- */
     QLineEdit, QTextEdit, QComboBox, QSpinBox {{
         background-color: {COLOR_SURFACE_ALT};
-        border: 1px solid {COLOR_BORDER};
-        border-radius: 4px;
+        border: 1px solid {COLOR_BORDER_SUBTLE};
+        border-radius: 7px;
         padding: 6px;
         color: {COLOR_TEXT};
         selection-background-color: {COLOR_PRIMARY};
@@ -304,9 +324,16 @@ def build_stylesheet() -> str:
     }}
 
     QScrollBar::handle:vertical {{
-        background: {COLOR_BORDER};
+        background: {COLOR_TEXT_MUTED};
         border-radius: 5px;
         min-height: 20px;
+    }}
+
+    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+        height: 0px;
+    }}
+    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+        background: transparent;
     }}
 
     /* ---------- Barre de menus (Fichier / Affichage / Aide) ---------- */

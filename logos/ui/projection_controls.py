@@ -60,18 +60,24 @@ class ProjectionControls(QWidget):
         self.preview.setObjectName("PreviewLabel")
         self.preview.setAlignment(Qt.AlignCenter)
         self.preview.setWordWrap(True)
-        self.preview.setFixedHeight(118)
+        self.preview.setFixedHeight(151)
+        self.preview.setStyleSheet(
+            f"QLabel {{ background:{theme.PROJECTION_BACKGROUND}; color:{theme.PROJECTION_TEXT};"
+            f" border:1px solid {theme.COLOR_BORDER_SUBTLE}; border-radius:10px; padding:12px; }}"
+        )
         col.addWidget(self.preview)
 
         nav = QHBoxLayout()
         self.prev_btn = QPushButton("◀")
         self.prev_btn.setProperty("buttonStyle", "secondary")
+        self.prev_btn.setStyleSheet(theme.btn_secondary_style())
         self.prev_btn.setToolTip("Diapositive précédente")
         self.prev_btn.clicked.connect(self.go_prev)
         self.counter = QLabel("—")
         self.counter.setAlignment(Qt.AlignCenter)
         self.next_btn = QPushButton("▶")
         self.next_btn.setProperty("buttonStyle", "secondary")
+        self.next_btn.setStyleSheet(theme.btn_secondary_style())
         self.next_btn.setToolTip("Diapositive suivante")
         self.next_btn.clicked.connect(self.go_next)
         nav.addWidget(self.prev_btn)
@@ -86,6 +92,7 @@ class ProjectionControls(QWidget):
         self.blackout_btn.clicked.connect(self._on_blackout_clicked)
         self.stop_btn = QPushButton("Arrêter")
         self.stop_btn.setProperty("buttonStyle", "secondary")
+        self.stop_btn.setStyleSheet(theme.btn_secondary_style())
         self.stop_btn.setToolTip("Arrêter la projection (aucun mode à l'antenne)")
         self.stop_btn.clicked.connect(self.controller.stop)
         row.addWidget(self.blackout_btn, 1)
@@ -150,7 +157,8 @@ class ProjectionControls(QWidget):
     def _set_badge(self, text: str, color: str):
         self.badge.setText(text)
         self.badge.setStyleSheet(
-            f"color:{color}; font-size:12px; font-weight:700; background:transparent;"
+            f"color:{color}; font-size:12px; font-weight:700;"
+            f" background:{theme.COLOR_SURFACE_ALT}; border:none; border-radius:8px; padding:9px;"
         )
 
     def _sync(self):
