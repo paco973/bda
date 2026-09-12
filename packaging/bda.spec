@@ -47,6 +47,16 @@ for asset in sorted((ROOT / "logos" / "assets").iterdir()):
         continue
     datas.append((str(asset), "logos/assets"))
 
+# Autorités de certification de `certifi` (voir `logos/tls.py`) : sans elles,
+# l'OpenSSL embarqué cherche `cert.pem` au chemin de la machine de build, ne
+# trouve rien sur le poste de l'opérateur, et chaque connexion HTTPS
+# (téléchargement des prédications, recherche de mise à jour) échoue en
+# CERTIFICATE_VERIFY_FAILED. Le hook PyInstaller de certifi copie déjà ce
+# fichier quand le module est détecté ; on l'impose explicitement pour que
+# l'oubli ne puisse pas se produire silencieusement.
+import certifi
+datas.append((certifi.where(), "certifi"))
+
 # Modules tirés par les dépendances mais inutiles ici : on allège le paquet.
 excludes = [
     "tkinter", "unittest", "pydoc", "pytest", "setuptools", "pip",
@@ -60,7 +70,7 @@ a = Analysis(
     pathex=[str(ROOT)],
     binaries=[],
     datas=datas,
-    hiddenimports=[],
+    hiddenimports=["certifi"],
     hookspath=[],
     runtime_hooks=[],
     excludes=excludes,

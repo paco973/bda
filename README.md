@@ -52,6 +52,11 @@ lettre où se trouve la prédication. Accents et majuscules sont indifférents.
 Le corpus n'est pas livré avec l'application (contenu sous copyright) : sans
 lui, le mode affiche « non disponible » et propose de le télécharger.
 
+> Si le téléchargement (ou « Aide → Rechercher les mises à jour… ») échoue avec
+> `CERTIFICATE_VERIFY_FAILED` alors que le poste est bien connecté, l'exécutable
+> a été construit sans les certificats embarqués : reconstruire avec une
+> version à jour de `packaging/bda.spec` (voir « Créer un exécutable »).
+
 ### Démarrer au milieu d'un verset ou d'un paragraphe
 
 **Sélectionner un passage à la souris** dans la colonne de lecture fait démarrer

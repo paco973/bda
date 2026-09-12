@@ -20,12 +20,12 @@ côté interface (cf. `logos/ui/update_banner.py`).
 Aucune dépendance Qt ici, pour que la logique reste testable telle quelle.
 """
 import json
-import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from logos.tls import ssl_context
 from logos.version import __version__
 
 # URL du manifeste de version. **Vide par défaut** : tant qu'elle n'est pas
@@ -110,24 +110,6 @@ def is_configured(manifest_url=None) -> bool:
     return _is_https(MANIFEST_URL if manifest_url is None else manifest_url)
 
 
-def _ssl_context():
-    """Contexte TLS : celui du système, complété par le paquet `certifi` quand
-    le système ne fournit aucune autorité de certification.
-
-    C'est le cas typique d'une application gelée par PyInstaller : l'OpenSSL
-    embarqué cherche les certificats au chemin de la machine de build et n'en
-    trouve aucun sur le poste de l'opérateur — chaque connexion HTTPS échoue
-    alors en CERTIFICATE_VERIFY_FAILED (« serveur injoignable »)."""
-    context = ssl.create_default_context()
-    if context.cert_store_stats().get("x509_ca", 0) == 0:
-        try:
-            import certifi
-            context.load_verify_locations(cafile=certifi.where())
-        except (ImportError, OSError):
-            pass  # sans autorité, l'échec TLS donnera ERROR — jamais d'exception
-    return context
-
-
 def _fetch(url):
     """Le manifeste décodé, ou None si la réponse est inutilisable.
 
@@ -135,7 +117,7 @@ def _fetch(url):
     et que c'est le manifeste qui manque (release pas encore publiée)."""
     try:
         with urllib.request.urlopen(
-            url, timeout=TIMEOUT_SECONDS, context=_ssl_context()
+            url, timeout=TIMEOUT_SECONDS, context=ssl_context()
         ) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as exc:  # sous-classe d'URLError : à tester avant

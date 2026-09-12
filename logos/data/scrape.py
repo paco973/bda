@@ -25,6 +25,8 @@ import unicodedata
 import urllib.request
 from urllib.parse import quote
 
+from logos.tls import ssl_context
+
 BASE = "https://branham.fr"
 INDEX_URL = f"{BASE}/sermons"
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
@@ -34,7 +36,7 @@ SOURCE = "branham.fr"
 def fetch(url: str) -> str:
     url = quote(url, safe=":/?&=#%")  # échappe tout caractère non-ASCII de l'URL
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=30, context=ssl_context()) as resp:
         return resp.read().decode("utf-8", "ignore")
 
 
