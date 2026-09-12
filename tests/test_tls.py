@@ -13,11 +13,18 @@ from logos.data import scrape
 
 
 def test_contexte_verifiant_et_garni(monkeypatch):
-    # Système sans aucune autorité (chemins OpenSSL inexistants) : certifi
-    # doit suffire à lui seul.
-    monkeypatch.setenv("SSL_CERT_FILE", "/nonexistent/cert.pem")
-    monkeypatch.setenv("SSL_CERT_DIR", "/nonexistent/certs")
-    assert ssl.create_default_context().cert_store_stats()["x509_ca"] == 0
+    # Système sans aucune autorité : certifi doit suffire à lui seul. On ne
+    # vide pas le magasin via SSL_CERT_FILE : sous Windows, Python lit les
+    # autorités du magasin système et ignore ces variables — on remplace donc
+    # le contexte de départ par un contexte vérifiant mais vide.
+    def empty_default_context():
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.verify_mode = ssl.CERT_REQUIRED
+        context.check_hostname = True
+        return context
+
+    assert empty_default_context().cert_store_stats()["x509_ca"] == 0
+    monkeypatch.setattr(tls.ssl, "create_default_context", empty_default_context)
 
     context = tls.ssl_context()
     assert context.verify_mode == ssl.CERT_REQUIRED
