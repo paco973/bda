@@ -456,7 +456,7 @@ def btn_secondary_style() -> str:
 
 
 def btn_danger_style() -> str:
-    """Bouton d'action destructrice ou d'état d'alerte (écran noir actif…)."""
+    """Bouton d'action destructrice ou d'état d'alerte (écran noir actif…). """
     return (
         f"QPushButton {{ background:{COLOR_DANGER}; color:white;"
         f" border:1px solid {COLOR_DANGER}; border-radius:6px; padding:11px 14px;"
