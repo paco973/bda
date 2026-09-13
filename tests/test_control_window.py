@@ -298,11 +298,14 @@ def test_bandeau_de_mise_a_jour(qapp):
     banner._action_btn.click()
     assert installs == [release] and restarts == []
 
-    # Pas installable (ou pas d'archive) : simple téléchargement manuel.
-    banner.show_release(release, installable=False)
+    # Pas installable (ou pas d'archive) : simple téléchargement manuel, et
+    # l'infobulle dit pourquoi.
+    banner.show_release(release, installable=False, reason="le dossier est protégé")
     assert banner._action_btn.text() == "Télécharger"
+    assert "le dossier est protégé" in banner._action_btn.toolTip()
     banner.show_release(updates.Release("9.9.9", "https://exemple.test/r"), installable=True)
     assert banner._action_btn.text() == "Télécharger"
+    assert "aucune archive" in banner._action_btn.toolTip()
 
     # Version prête : le bouton demande le redémarrage.
     banner.show_ready(release)
@@ -327,9 +330,12 @@ def test_fenetre_refuse_l_installation_depuis_les_sources(qapp, monkeypatch):
     try:
         asset = updates.Asset("https://exemple.test/BDA.zip", "a" * 64, 10)
         release = updates.Release("9.9.9", "https://exemple.test/releases", asset=asset)
-        # Depuis les sources (pas gelée) : le bandeau propose seulement « Télécharger ».
-        win._show_available(release)
+        # Depuis les sources (pas gelée) : le bandeau propose seulement
+        # « Télécharger », et la raison est renvoyée pour le dialogue.
+        reason = win._show_available(release)
         assert win.update_banner._action_btn.text() == "Télécharger"
+        assert reason and "version installée" in reason
+        assert reason in win.update_banner._action_btn.toolTip()
         # Et une demande d'installation directe est refusée proprement.
         win._install_update(release)
         assert shown and "pas possible" in shown[0]

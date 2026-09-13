@@ -79,16 +79,34 @@ def current_install(executable=None, frozen=None, system=None) -> Install | None
 
 
 def unavailable_reason(install: Install | None) -> str | None:
-    """None si l'installation intégrée est possible, sinon la raison (pour
-    que le bandeau retombe sur « ouvrir la page de téléchargement »)."""
+    """None si l'installation intégrée est possible, sinon la raison, formulée
+    pour l'opérateur (affichée dans l'infobulle du bandeau et dans « Aide →
+    Rechercher les mises à jour… ») — le bandeau retombe alors sur « ouvrir
+    la page de téléchargement »."""
     if install is None:
-        return "l'application ne tourne pas depuis une version installée"
+        return ("l'application ne tourne pas depuis une version installée "
+                "(bundle BDA.app sur macOS, dossier BDA sur Windows)")
+    if is_translocated(install.root):
+        # Gatekeeper lance une application téléchargée par un navigateur, et
+        # jamais déplacée, depuis un montage temporaire en lecture seule
+        # (« App Translocation ») : son vrai dossier est inconnu et celui-ci
+        # n'est pas modifiable. Déplacer l'application avec le Finder suffit.
+        return ("macOS exécute cette application depuis un emplacement temporaire "
+                "protégé, comme pour toute application téléchargée qui n'a pas encore "
+                "été déplacée : glissez BDA dans le dossier Applications avec le "
+                "Finder, puis relancez-la")
     parent = install.root.parent
     # Sous Windows, `os.access` ne reflète pas les ACL des dossiers : un refus
     # réel y sera rattrapé plus tard par `stage()` (InstallError, rien modifié).
     if not os.access(parent, os.W_OK):
-        return f"le dossier {parent} n'est pas modifiable par cet utilisateur"
+        return (f"le dossier {parent} n'est pas modifiable par cet utilisateur "
+                "(sur macOS, seul un compte administrateur peut modifier Applications)")
     return None
+
+
+def is_translocated(path) -> bool:
+    """Vrai si `path` est dans un montage « App Translocation » de macOS."""
+    return "/AppTranslocation/" in str(path)
 
 
 def _expected_executable(install: Install, root: Path) -> Path:

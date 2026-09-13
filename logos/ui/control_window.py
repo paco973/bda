@@ -655,10 +655,15 @@ class ControlWindow(QMainWindow):
             self._show_available(result.release)
 
     def _show_available(self, release):
+        """Affiche le bandeau ; renvoie la raison pour laquelle l'installation
+        intégrée n'est pas possible (None si elle l'est)."""
         if self._staged_update is not None:
-            return  # une version est déjà prête : ne pas repartir de zéro
-        installable = selfupdate.unavailable_reason(selfupdate.current_install()) is None
-        self.update_banner.show_release(release, installable)
+            return None  # une version est déjà prête : ne pas repartir de zéro
+        reason = selfupdate.unavailable_reason(selfupdate.current_install())
+        if reason is None and release.asset is None:
+            reason = "aucune archive n'est publiée pour cette plateforme"
+        self.update_banner.show_release(release, reason is None, reason)
+        return reason
 
     # ---------- Mise à jour intégrée ----------
     def _install_update(self, release):
@@ -876,7 +881,7 @@ class ControlWindow(QMainWindow):
 
     def _on_manual_check_done(self, result):
         if result.status == updates.AVAILABLE:
-            self._show_available(result.release)
+            reason = self._show_available(result.release)
             box = QMessageBox(self)
             box.setWindowTitle("Mises à jour")
             box.setTextFormat(Qt.PlainText)  # notes distantes : jamais du HTML
@@ -884,6 +889,14 @@ class ControlWindow(QMainWindow):
                 f"La version {result.release.version} est disponible "
                 f"(vous utilisez la {__version__})."
                 + (f"\n\n{result.release.notes}" if result.release.notes else "")
+            )
+            # Dire pourquoi le bandeau ne propose que « Télécharger » : sans
+            # cela, l'opérateur ne peut pas savoir ce qui manque.
+            box.setInformativeText(
+                "Le bandeau en haut de la fenêtre permet de l'installer."
+                if reason is None else
+                f"Installation automatique indisponible : {reason}.\n\n"
+                "Le bandeau en haut de la fenêtre ouvre la page de téléchargement."
             )
             box.exec()
         elif result.status == updates.NOT_PUBLISHED:

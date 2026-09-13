@@ -134,9 +134,19 @@ bandeau apparaît en haut de la fenêtre :
    démarrer, renommez ce dossier pour revenir en arrière.
 
 Le bouton s'appelle **Télécharger** (il ouvre simplement la page de
-téléchargement) quand l'installation intégrée n'est pas possible : version
-lancée depuis les sources, dossier d'installation non modifiable par
-l'utilisateur, ou version publiée sans archive pour votre plateforme.
+téléchargement) quand l'installation intégrée n'est pas possible. Survolez-le,
+ou passez par **Aide → Rechercher les mises à jour…**, pour lire la raison :
+
+- **macOS : application téléchargée et jamais déplacée.** Ouverte depuis le
+  dossier Téléchargements (après « Ouvrir quand même »), elle est lancée par
+  macOS depuis un emplacement temporaire protégé. Glissez `BDA.app` dans
+  **Applications** avec le Finder, puis relancez-la : le bouton apparaît. Une
+  version installée par l'application elle-même n'a plus ce problème.
+- **Dossier non modifiable** : sur macOS, seul un compte administrateur peut
+  modifier Applications ; sur Windows, évitez `Program Files` sans droits
+  d'administration.
+- Version lancée depuis les sources, ou version publiée sans archive pour
+  votre plateforme.
 
 **Aide → Vérifier au démarrage** désactive la vérification automatique. Sur un
 poste sans Internet, la vérification échoue en silence et ne gêne pas

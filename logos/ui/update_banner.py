@@ -107,18 +107,30 @@ class UpdateBanner(QFrame):
     def release(self):
         return self._release
 
-    def show_release(self, release, installable: bool = False):
+    def show_release(self, release, installable: bool = False, reason: str | None = None):
         """Affiche le bandeau pour `release`. `installable` : l'application
-        peut la télécharger et se remplacer elle-même."""
+        peut la télécharger et se remplacer elle-même ; sinon `reason` (texte
+        pour l'opérateur) explique pourquoi, dans l'infobulle du bouton."""
         self._release = release
         self._ready = False
         self._label.setText(
             f"Version {release.version} disponible "
             f"(vous utilisez la {__version__})."
         )
-        self._action_btn.setText(
-            "Installer la mise à jour" if installable and release.asset else "Télécharger"
-        )
+        if installable and release.asset:
+            self._action_btn.setText("Installer la mise à jour")
+            self._action_btn.setToolTip(
+                "Télécharge, vérifie et prépare la nouvelle version ; "
+                "l'application ne sera remplacée qu'au redémarrage."
+            )
+        else:
+            self._action_btn.setText("Télécharger")
+            if not release.asset:
+                reason = "aucune archive n'est publiée pour cette plateforme"
+            self._action_btn.setToolTip(
+                "Ouvre la page de téléchargement dans le navigateur.\n"
+                f"Installation automatique indisponible : {reason or 'raison inconnue'}."
+            )
         self._action_btn.setEnabled(True)
         self.show()
 

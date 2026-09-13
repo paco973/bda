@@ -42,6 +42,14 @@ def test_macos_hors_bundle_non_pris_en_charge(tmp_path):
     assert selfupdate.current_install(exe, frozen=True, system="darwin") is None
 
 
+def test_translocation_macos_expliquee():
+    root = Path("/private/var/folders/xx/T/AppTranslocation/1234-5678/d/BDA.app")
+    assert selfupdate.is_translocated(root)
+    reason = selfupdate.unavailable_reason(Install(root, bundle=True))
+    assert reason is not None and "Finder" in reason
+    assert not selfupdate.is_translocated(Path("/Applications/BDA.app"))
+
+
 def test_dossier_windows(tmp_path):
     exe = tmp_path / "Programs" / "BDA" / "BDA.exe"
     exe.parent.mkdir(parents=True)
