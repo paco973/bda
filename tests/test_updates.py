@@ -263,6 +263,35 @@ def test_panne_reseau_pendant_le_telechargement(tmp_path, fake_download):
     fake_download(urllib.error.URLError("coupure"))
     with pytest.raises(updates.DownloadError, match="interrompu"):
         updates.download_asset(_asset(b"x"), tmp_path)
+    assert not list(tmp_path.iterdir())
+
+
+def test_blocage_passager_retente_une_fois(tmp_path, monkeypatch):
+    payload = b"archive de test"
+    calls = []
+
+    def flaky_urlopen(url, timeout=None, context=None):
+        calls.append(url)
+        if len(calls) == 1:
+            raise TimeoutError("The read operation timed out")
+        return _StreamResponse(payload)
+
+    monkeypatch.setattr(updates.urllib.request, "urlopen", flaky_urlopen)
+    path = updates.download_asset(_asset(payload), tmp_path)
+    assert len(calls) == 2 and path.read_bytes() == payload
+
+
+def test_archive_non_conforme_n_est_pas_retentee(tmp_path, monkeypatch):
+    calls = []
+
+    def urlopen(url, timeout=None, context=None):
+        calls.append(url)
+        return _StreamResponse(b"trop long")
+
+    monkeypatch.setattr(updates.urllib.request, "urlopen", urlopen)
+    with pytest.raises(updates.DownloadError, match="plus grosse"):
+        updates.download_asset(_asset(b"court"), tmp_path)
+    assert len(calls) == 1
 
 
 def test_lien_non_https_refuse_avant_tout_acces(tmp_path, monkeypatch):

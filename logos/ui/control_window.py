@@ -403,7 +403,7 @@ class ControlWindow(QMainWindow):
         title.setStyleSheet(
             f"color:{theme.COLOR_TEXT}; font-size:34px; font-weight:700; background:transparent;"
         )
-        subtitle = QLabel("Logos Tabernacle · Votre espace de présentation")
+        subtitle = QLabel("Logos Tabernacle · Votre espace de présentation test")
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setStyleSheet(
             f"color:{theme.COLOR_TEXT_MUTED}; font-size:14px; font-weight:500; background:transparent;"

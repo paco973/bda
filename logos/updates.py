@@ -61,6 +61,9 @@ MAX_NOTES_CHARS = 500
 # panne) et une taille plafond au-delà de laquelle ce n'est pas notre archive.
 DOWNLOAD_TIMEOUT_SECONDS = 30
 DOWNLOAD_CHUNK_BYTES = 256 * 1024
+# Un blocage passager (lecture expirée, connexion coupée) ne doit pas faire
+# échouer la mise à jour : on recommence une fois depuis le début.
+DOWNLOAD_ATTEMPTS = 2
 MAX_ARCHIVE_BYTES = 500 * 1024 * 1024
 
 # Issues possibles d'une vérification.
@@ -242,7 +245,8 @@ def download_asset(asset: Asset, dest_dir, on_progress=None, should_stop=None) -
     l'arrêt ; lève `DownloadError` sinon. `on_progress(received, total)` est
     appelé à chaque bloc. Le fichier s'écrit sous un nom temporaire (`.part`)
     et n'est renommé qu'une fois vérifié : une archive présente sur le disque
-    est donc toujours une archive conforme."""
+    est donc toujours une archive conforme. Une panne réseau est retentée
+    (`DOWNLOAD_ATTEMPTS`) ; une archive non conforme, jamais."""
     if not _is_https(asset.url):
         raise DownloadError("le lien de téléchargement n'est pas en HTTPS")
     dest_dir = Path(dest_dir)
@@ -251,20 +255,56 @@ def download_asset(asset: Asset, dest_dir, on_progress=None, should_stop=None) -
     partial = target.with_name(target.name + ".part")
     target.unlink(missing_ok=True)
 
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            digest = _download_once(asset, partial, on_progress, should_stop)
+        except _NetworkFailure as exc:
+            partial.unlink(missing_ok=True)
+            if attempt == DOWNLOAD_ATTEMPTS:
+                raise DownloadError(f"téléchargement interrompu ({exc.cause})") from exc.cause
+            continue
+        except DownloadError:
+            partial.unlink(missing_ok=True)
+            raise
+        if digest is None:  # annulé par l'opérateur
+            partial.unlink(missing_ok=True)
+            return None
+        break
+
+    if digest.hexdigest() != asset.sha256:
+        partial.unlink(missing_ok=True)
+        raise DownloadError(
+            "l'empreinte de l'archive ne correspond pas à celle annoncée : "
+            "fichier corrompu ou altéré, il a été supprimé"
+        )
+    partial.replace(target)
+    return target
+
+
+class _NetworkFailure(Exception):
+    """Panne réseau ou disque pendant un essai : à retenter (cf. `cause`)."""
+
+    def __init__(self, cause):
+        super().__init__(str(cause))
+        self.cause = cause
+
+
+def _download_once(asset, partial, on_progress, should_stop):
+    """Un essai complet : l'empreinte des octets reçus, ou None si annulé.
+    Lève `_NetworkFailure` (à retenter) ou `DownloadError` (définitif).
+
+    Le fichier partiel n'est supprimé qu'une fois **refermé**, par l'appelant :
+    sous Windows, supprimer un fichier encore ouvert échoue (« utilisé par un
+    autre processus »), et l'annulation se transformait en erreur."""
     digest = hashlib.sha256()
     received = 0
-    cancelled = False
-    # Le fichier partiel n'est supprimé qu'une fois **refermé** : sous Windows,
-    # supprimer un fichier encore ouvert échoue (« utilisé par un autre
-    # processus »), et l'annulation se transformait en erreur.
     try:
         with urllib.request.urlopen(
             asset.url, timeout=DOWNLOAD_TIMEOUT_SECONDS, context=ssl_context()
         ) as response, open(partial, "wb") as out:
             while True:
                 if should_stop is not None and should_stop():
-                    cancelled = True
-                    break
+                    return None
                 chunk = response.read(DOWNLOAD_CHUNK_BYTES)
                 if not chunk:
                     break
@@ -275,24 +315,8 @@ def download_asset(asset: Asset, dest_dir, on_progress=None, should_stop=None) -
                 out.write(chunk)
                 if on_progress is not None:
                     on_progress(received, asset.size)
-    except DownloadError:
-        partial.unlink(missing_ok=True)
-        raise
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        partial.unlink(missing_ok=True)
-        raise DownloadError(f"téléchargement interrompu ({exc})") from exc
-
-    if cancelled:
-        partial.unlink(missing_ok=True)
-        return None
+        raise _NetworkFailure(exc) from exc
     if received != asset.size:
-        partial.unlink(missing_ok=True)
         raise DownloadError("l'archive reçue est incomplète")
-    if digest.hexdigest() != asset.sha256:
-        partial.unlink(missing_ok=True)
-        raise DownloadError(
-            "l'empreinte de l'archive ne correspond pas à celle annoncée : "
-            "fichier corrompu ou altéré, il a été supprimé"
-        )
-    partial.replace(target)
-    return target
+    return digest
