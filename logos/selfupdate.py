@@ -38,6 +38,13 @@ from pathlib import Path, PureWindowsPath
 # Nom de l'exécutable / du bundle tel que produit par `packaging/bda.spec`.
 APP_NAME = "BDA"
 
+# Identifiant de l'installeur Windows (`packaging/bda.iss`, AppId) : la clé de
+# désinstallation qu'Inno Setup crée s'appelle `<AppId>_is1`. Doit rester
+# identique des deux côtés (vérifié par un test).
+INNO_APP_ID = "{A3F5C7E9-2B4D-4E6F-8A1C-3D5E7F9B1C2D}"
+UNINSTALL_KEY = (r"HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall"
+                 f"\\{INNO_APP_ID}_is1")
+
 
 class InstallError(Exception):
     """Installation impossible : message destiné à l'opérateur."""
@@ -151,9 +158,25 @@ def stage(archive, install: Install) -> Path:
     if not _expected_executable(install, extracted).is_file():
         _remove_tree(scratch)
         raise InstallError("l'archive ne contient pas l'application attendue")
+    if not install.bundle:
+        _preserve_uninstaller(install.root, extracted)
     extracted.rename(staging)
     _remove_tree(scratch)
     return staging
+
+
+def _preserve_uninstaller(root: Path, staged: Path):
+    """Recopie dans la version extraite le désinstalleur qu'Inno Setup a posé
+    dans le dossier (`unins000.exe` / `.dat`) : l'archive de mise à jour n'en
+    contient pas, et sans lui « Désinstaller » dans Windows ne marcherait plus
+    après une mise à jour intégrée. Une installation portable (archive
+    dézippée) n'en a pas : rien à faire."""
+    for item in root.glob("unins*.*"):
+        if item.is_file():
+            try:
+                shutil.copy2(item, staged / item.name)
+            except OSError:
+                pass
 
 
 def _check_members(zf: zipfile.ZipFile):
@@ -179,17 +202,18 @@ def swap(install: Install, staged: Path):
         raise InstallError(f"remplacement impossible ({exc})") from exc
 
 
-def install_and_restart(install: Install, staged: Path, pid=None):
+def install_and_restart(install: Install, staged: Path, pid=None, version=None):
     """Applique la mise à jour et programme le redémarrage ; l'appelant doit
     ensuite **quitter** l'application. Lève `InstallError` si rien n'a été
     modifié ; une fois cette fonction revenue, l'échange est fait (macOS) ou
-    confié au script d'aide (Windows)."""
+    confié au script d'aide (Windows). `version` (numéro de la nouvelle) sert
+    au script Windows à tenir à jour « Applications installées »."""
     pid = os.getpid() if pid is None else pid
     if install.bundle:
         swap(install, staged)
         _relaunch_after_exit_posix(pid, ["open", "-n", str(install.root)])
     else:
-        _relaunch_windows(install, staged, pid)
+        _relaunch_windows(install, staged, pid, version)
 
 
 def _relaunch_after_exit_posix(pid, command):
@@ -212,16 +236,28 @@ def _sh_quote(text: str) -> str:
     return "'" + str(text).replace("'", "'\"'\"'") + "'"
 
 
-def windows_helper_script(install: Install, staged: Path, pid: int) -> str:
+def windows_helper_script(install: Install, staged: Path, pid: int, version=None) -> str:
     """Script `.cmd` qui attend la fin du processus, échange les dossiers puis
     relance l'application. Séparé de son lancement pour être testable (sur
     toute plateforme : les chemins sont mis en forme façon Windows). Écrit en
     UTF-8 avec `chcp 65001` : un nom d'utilisateur accentué dans le chemin ne
-    doit pas casser le script."""
+    doit pas casser le script.
+
+    Si `version` est donnée et que l'application a été posée par l'installeur
+    (clé de désinstallation présente), le script met à jour la version que
+    Windows affiche dans « Applications installées » — après l'échange réussi
+    seulement, et sans jamais créer la clé pour une installation portable."""
     root = PureWindowsPath(str(install.root))
     previous = PureWindowsPath(str(install.previous))
     staged = PureWindowsPath(str(staged))
     exe = root / f"{APP_NAME}.exe"
+    stamp = []
+    if version:
+        safe = str(version).replace('"', "")
+        stamp = [
+            f'reg query "{UNINSTALL_KEY}" >nul 2>&1 && '
+            f'reg add "{UNINSTALL_KEY}" /v DisplayVersion /t REG_SZ /d "{safe}" /f >nul',
+        ]
     return "\r\n".join([
         "@echo off",
         "chcp 65001 >nul",
@@ -234,6 +270,7 @@ def windows_helper_script(install: Install, staged: Path, pid: int) -> str:
         f'if exist "{previous}" rmdir /s /q "{previous}"',
         f'move "{root}" "{previous}" >nul || goto failed',
         f'move "{staged}" "{root}" >nul || goto rollback',
+        *stamp,
         f'start "" "{exe}"',
         "exit /b 0",
         ":rollback",
@@ -245,10 +282,11 @@ def windows_helper_script(install: Install, staged: Path, pid: int) -> str:
     ])
 
 
-def _relaunch_windows(install: Install, staged: Path, pid: int):
+def _relaunch_windows(install: Install, staged: Path, pid: int, version=None):
     script_path = install.root.parent / f"{APP_NAME}-update.cmd"
     try:
-        script_path.write_text(windows_helper_script(install, staged, pid), encoding="utf-8")
+        script_path.write_text(windows_helper_script(install, staged, pid, version),
+                               encoding="utf-8")
         flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
             subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         subprocess.Popen(["cmd.exe", "/c", str(script_path)], creationflags=flags,

@@ -57,25 +57,43 @@ class ProjectionController(QObject):
     def screens(self):
         return QGuiApplication.screens()
 
+    def primary_screen(self):
+        return QGuiApplication.primaryScreen()
+
     def screen(self):
         return self._screen
 
-    def _pick_default_screen(self):
-        screens = self.screens()
-        if not screens:
-            self._screen = None
-        elif len(screens) > 1:
-            # Souvent le dernier écran détecté est le vidéoprojecteur.
-            self._screen = screens[-1]
-        else:
-            self._screen = screens[0]
+    def is_primary(self, screen) -> bool:
+        """`screen` est-il l'écran principal, celui qui porte le poste de contrôle ?"""
+        return screen is not None and screen is self.primary_screen()
 
-    def set_screen(self, screen):
+    def _default_screen(self):
+        """Écran de projection par défaut : le **second** écran.
+
+        L'écran principal porte le poste de contrôle ; le vidéoprojecteur est
+        l'autre. On ne se fie pas à l'ordre de détection (le dernier écran de
+        `screens()` n'est pas forcément le projecteur). Sans second écran, on
+        retombe sur le seul disponible ; sans écran, None.
+        """
+        screens = self.screens()
+        for screen in screens:
+            if not self.is_primary(screen):
+                return screen
+        return screens[0] if screens else None
+
+    def _pick_default_screen(self):
+        self._apply_screen(self._default_screen())
+
+    def _apply_screen(self, screen):
+        """Change l'écran cible et y déplace la projection si un mode est à l'antenne."""
         self._screen = screen
         if screen is not None and self._on_air is not None:
             self.window.set_font_size(self._font_size)
             self.window.show_on_screen(screen)
             self.window.toggle_blank(self._blackout)
+
+    def set_screen(self, screen):
+        self._apply_screen(screen)
         self.changed.emit()
 
     def refresh_screens(self):
@@ -85,6 +103,12 @@ class ProjectionController(QObject):
             # L'écran cible a disparu : on coupe proprement et on réélit un défaut.
             if self._on_air is not None:
                 self.stop()
+            self._pick_default_screen()
+        elif self.is_primary(self._screen):
+            # Un second écran vient d'apparaître alors que la cible était encore
+            # l'écran du poste (appli lancée avant le branchement du projecteur) :
+            # on l'adopte, projection comprise si elle est à l'antenne. Un choix
+            # explicite d'un autre écran secondaire n'est pas touché.
             self._pick_default_screen()
         self.screens_changed.emit()
         self.changed.emit()

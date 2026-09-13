@@ -11,6 +11,16 @@ Produit dans `dist/` :
     BDA-<version>-<plateforme>.zip
     BDA-<version>-<plateforme>.zip.sha256
 
+et, sur Windows, si le compilateur d'Inno Setup est trouvé (chemin par défaut
+d'Inno Setup 6 ou variable d'environnement `ISCC`), l'installeur décrit par
+`packaging/bda.iss` :
+
+    BDA-<version>-windows-setup.exe
+    BDA-<version>-windows-setup.exe.sha256
+
+L'archive reste produite à côté : c'est elle que la mise à jour intégrée
+télécharge, l'installeur servant à la première installation.
+
 Sur macOS l'archive est faite avec `ditto`, et non avec `zip` : un bundle `.app`
 contient des liens symboliques (frameworks Qt) que `zip` aplatit, ce qui donne
 une application cassée à l'arrivée.
@@ -29,6 +39,7 @@ empreinte : c'est ce qui permet à l'application de se mettre à jour seule
 import argparse
 import hashlib
 import json
+import os
 import platform
 import re
 import shutil
@@ -79,6 +90,56 @@ def build_archive() -> Path:
     # Le dossier entier est le livrable : l'exécutable seul ne fonctionne pas.
     shutil.make_archive(str(archive.with_suffix("")), "zip", root_dir=DIST, base_dir="BDA")
     return archive
+
+
+# Compilateur d'Inno Setup : chemin d'installation par défaut sur Windows, ou
+# celui donné par la variable d'environnement ISCC (autre version, autre dossier).
+DEFAULT_ISCC = Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe")
+
+
+def installer_name(version_: str | None = None) -> str:
+    return f"BDA-{version_ or version()}-windows-setup.exe"
+
+
+def find_iscc(environ=None) -> Path | None:
+    """Le compilateur d'Inno Setup s'il est disponible (Windows seulement)."""
+    environ = os.environ if environ is None else environ
+    candidate = environ.get("ISCC")
+    if candidate:
+        path = Path(candidate)
+        return path if path.is_file() else None
+    if platform.system() != "Windows":
+        return None
+    return DEFAULT_ISCC if DEFAULT_ISCC.is_file() else None
+
+
+def installer_command(iscc: Path, version_: str, source: Path, out_dir: Path) -> list:
+    """Ligne de commande ISCC : la version vient de `logos/version.py`, le
+    dossier PyInstaller et la sortie sont passés au script pour ne dépendre
+    d'aucun chemin relatif au moment de la compilation."""
+    return [
+        str(iscc),
+        f"/DAppVersion={version_}",
+        f"/DSourceDir={source}",
+        f"/DOutputDir={out_dir}",
+        str(ROOT / "packaging" / "bda.iss"),
+    ]
+
+
+def build_installer() -> Path | None:
+    """Compile l'installeur Windows depuis `dist/BDA/`, ou None si ISCC est absent."""
+    iscc = find_iscc()
+    if iscc is None:
+        return None
+    folder = DIST / "BDA"
+    if not folder.is_dir():
+        sys.exit("Rien à installer : lancer d'abord pyinstaller packaging/bda.spec")
+    target = DIST / installer_name()
+    target.unlink(missing_ok=True)
+    subprocess.run(installer_command(iscc, version(), folder, DIST), check=True)
+    if not target.is_file():
+        sys.exit(f"ISCC n'a pas produit {target.name}")
+    return target
 
 
 def collect_assets(out_dir: Path, asset_base: str) -> dict:
@@ -153,6 +214,14 @@ def main():
     size_mb = archive.stat().st_size / 1_000_000
     print(f"Écrit : {archive} ({size_mb:.0f} Mo)")
     print(f"Écrit : {checksum}")
+    if platform_tag() == "windows":
+        installer = build_installer()
+        if installer is None:
+            print("Inno Setup introuvable : pas d'installeur (archive seule). "
+                  "Installer Inno Setup 6 ou renseigner ISCC.")
+        else:
+            print(f"Écrit : {installer} ({installer.stat().st_size / 1_000_000:.0f} Mo)")
+            print(f"Écrit : {write_checksum(installer)}")
     if args.release_url:
         print(f"Écrit : {write_manifest(args.release_url, args.notes, args.out, args.asset_base)}")
 

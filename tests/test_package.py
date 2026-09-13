@@ -48,3 +48,32 @@ def test_somme_manquante_est_une_erreur(package, tmp_path):
     (tmp_path / f"BDA-{package.version()}-macos.zip").write_bytes(b"archive")
     with pytest.raises(SystemExit):
         package.collect_assets(tmp_path, "https://exemple.test/dl")
+
+
+def test_installeur_ligne_de_commande(package, tmp_path):
+    iscc = tmp_path / "ISCC.exe"
+    command = package.installer_command(iscc, "1.2.3", tmp_path / "dist" / "BDA", tmp_path / "dist")
+    assert command[0] == str(iscc)
+    assert "/DAppVersion=1.2.3" in command
+    assert f"/DSourceDir={tmp_path / 'dist' / 'BDA'}" in command
+    assert f"/DOutputDir={tmp_path / 'dist'}" in command
+    assert command[-1] == str(ROOT / "packaging" / "bda.iss")
+    assert package.installer_name("1.2.3") == "BDA-1.2.3-windows-setup.exe"
+
+
+def test_iscc_via_variable_d_environnement(package, tmp_path):
+    iscc = tmp_path / "ISCC.exe"
+    assert package.find_iscc({"ISCC": str(iscc)}) is None       # fichier absent
+    iscc.write_bytes(b"")
+    assert package.find_iscc({"ISCC": str(iscc)}) == iscc
+
+
+def test_script_inno_coherent_avec_le_code(package):
+    """L'AppId du script et celui de `selfupdate` doivent rester identiques, et
+    le nom de sortie celui que `package.py` attend."""
+    from logos import selfupdate
+
+    script = (ROOT / "packaging" / "bda.iss").read_text(encoding="utf-8")
+    assert f"AppId={selfupdate.INNO_APP_ID}" in script
+    assert "OutputBaseFilename=BDA-{#AppVersion}-windows-setup" in script
+    assert "PrivilegesRequired=lowest" in script  # la mise à jour intégrée en dépend

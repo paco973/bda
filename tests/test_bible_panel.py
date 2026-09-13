@@ -193,7 +193,7 @@ def test_recherche_dans_les_versets(qapp):
     assert item.text().startswith("Jean 3:16 — ")
 
     # Cliquer un résultat saute au verset et referme la liste.
-    panel._on_verse_result_clicked(item)
+    panel.verse_results.itemClicked.emit(item)  # vrai chemin : le widget masque puis émet `activated`
     assert not panel.verse_results.isVisibleTo(panel)
     assert (panel._book["id"], panel._chapter, panel._verse) == (43, 3, 16)
 

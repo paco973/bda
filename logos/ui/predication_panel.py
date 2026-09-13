@@ -17,8 +17,6 @@ styles de boutons de `theme`.
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QWidget,
-    QListWidget,
-    QListWidgetItem,
     QFrame,
     QLabel,
     QLineEdit,
@@ -32,6 +30,7 @@ from logos import resources
 from logos.data import predications, slides
 from logos.ui import theme
 from logos.ui.widgets import (
+    FloatingResults,
     FlowHost,
     NumButton,
     NumberedTextRow,
@@ -331,22 +330,12 @@ class PredicationPanel(QWidget):
         self.text_search_edit.returnPressed.connect(self._on_text_search_return)
         text_row.addWidget(self.text_search_edit)
         row.addWidget(text_box)
-        self._text_search_box = text_box
 
         # Liste flottante des paragraphes trouvés, ancrée sous le champ.
-        self.text_results = QListWidget(self)
-        self.text_results.setVisible(False)
-        self.text_results.setWordWrap(False)
-        self.text_results.setTextElideMode(Qt.ElideRight)
-        self.text_results.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.text_results.setStyleSheet(
-            f"QListWidget {{ background:{theme.COLOR_SURFACE_ALT}; color:{theme.COLOR_TEXT};"
-            f" border:1px solid {theme.COLOR_BORDER}; border-radius:6px; font-size:13px; }}"
-            f"QListWidget::item {{ padding:6px 10px; }}"
-            f"QListWidget::item:selected, QListWidget::item:hover"
-            f" {{ background:{theme.COLOR_PRIMARY}; color:{theme.COLOR_TEXT_ON_PRIMARY}; }}"
+        self.text_results = FloatingResults(
+            self, text_box, "Aucun paragraphe trouvé", min_width=460, max_width=720
         )
-        self.text_results.itemClicked.connect(self._on_text_result_clicked)
+        self.text_results.activated.connect(self._on_text_result_activated)
 
         # Anti-rebond : les recherches partent 300 ms après la dernière frappe
         # (la liste n'est pas reconstruite à chaque caractère).
@@ -798,54 +787,30 @@ class PredicationPanel(QWidget):
         if len(query) < 3 or not self._letter_cards:
             self.text_results.hide()
             return
-        results = predications.search_paragraphs(query)
-        self.text_results.clear()
-        if not results:
-            empty = QListWidgetItem("Aucun paragraphe trouvé")
-            empty.setFlags(Qt.NoItemFlags)
-            self.text_results.addItem(empty)
-        for row in results:
+        rows = []
+        for row in predications.search_paragraphs(query):
             texte = row["text"]
             if len(texte) > 90:
                 texte = texte[:90].rstrip() + "…"
-            item = QListWidgetItem(
-                f"{row['date_code']} · {row['title_fr']} · §{row['number']} — {texte}"
+            rows.append(
+                (f"{row['date_code']} · {row['title_fr']} · §{row['number']} — {texte}", row)
             )
-            item.setData(Qt.UserRole, row)
-            self.text_results.addItem(item)
-        self._place_text_results()
-        self.text_results.show()
-        self.text_results.raise_()
+        self.text_results.show_results(rows)
 
-    def _place_text_results(self):
-        """Ancre la liste de résultats sous le champ de recherche plein texte."""
-        anchor = self._text_search_box.mapTo(
-            self, self._text_search_box.rect().bottomLeft()
-        )
-        row_height = self.text_results.sizeHintForRow(0)
-        height = min(360, self.text_results.count() * max(row_height, 24) + 8)
-        width = min(720, max(460, self.width() - anchor.x() - 24))
-        self.text_results.setGeometry(anchor.x(), anchor.y() + 6, width, height)
-
-    def _on_text_result_clicked(self, item):
-        cible = item.data(Qt.UserRole)
-        if cible:
-            # Arrêter l'anti-rebond : une frappe encore en attente rouvrirait la
-            # liste juste après le saut.
-            self._text_search_timer.stop()
-            self.text_results.hide()
-            self._jump_to_paragraph(cible)
+    def _on_text_result_activated(self, cible):
+        # Arrêter l'anti-rebond : une frappe encore en attente rouvrirait la
+        # liste juste après le saut.
+        self._text_search_timer.stop()
+        self._jump_to_paragraph(cible)
 
     def _on_text_search_return(self):
         """Entrée : rejoint le premier paragraphe trouvé."""
         self._text_search_timer.stop()
         self._run_text_search()
-        for i in range(self.text_results.count()):
-            cible = self.text_results.item(i).data(Qt.UserRole)
-            if cible:
-                self.text_results.hide()
-                self._jump_to_paragraph(cible)
-                return
+        cible = self.text_results.first_target()
+        if cible:
+            self.text_results.hide()
+            self._jump_to_paragraph(cible)
 
     def _jump_to_paragraph(self, cible):
         """Rejoint un paragraphe trouvé par la recherche plein texte.
@@ -865,7 +830,7 @@ class PredicationPanel(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self.text_results.isVisible():
-            self._place_text_results()
+            self.text_results.place()
 
     def keyPressEvent(self, event):
         # Échap referme la liste de résultats (la touche remonte depuis le champ).

@@ -425,7 +425,7 @@ def test_recherche_plein_texte_du_panneau(qapp):
     item = panel.text_results.item(0)
     assert "Zacharie" in item.text() and "§2" in item.text()
 
-    panel._on_text_result_clicked(item)
+    panel.text_results.itemClicked.emit(item)  # vrai chemin : le widget masque puis émet `activated`
     assert panel._letter == "Z"
     assert panel._predication["title_fr"] == "Zacharie"
     assert panel._paragraph == 2

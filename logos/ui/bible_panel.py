@@ -18,8 +18,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
     QVBoxLayout,
     QHBoxLayout,
@@ -30,6 +28,7 @@ from PySide6.QtWidgets import (
 from logos.data import bible, slides
 from logos.ui import theme
 from logos.ui.widgets import (
+    FloatingResults,
     FlowHost,
     NumButton,
     NumberedTextRow,
@@ -287,22 +286,12 @@ class BiblePanel(QWidget):
         self.verse_search_edit.returnPressed.connect(self._on_verse_search_return)
         verse_row.addWidget(self.verse_search_edit)
         row.addWidget(verse_box)
-        self._verse_search_box = verse_box
 
         # Liste flottante des versets trouvés, ancrée sous le champ.
-        self.verse_results = QListWidget(self)
-        self.verse_results.setVisible(False)
-        self.verse_results.setWordWrap(False)
-        self.verse_results.setTextElideMode(Qt.ElideRight)
-        self.verse_results.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.verse_results.setStyleSheet(
-            f"QListWidget {{ background:{theme.COLOR_SURFACE_ALT}; color:{theme.COLOR_TEXT};"
-            f" border:1px solid {theme.COLOR_BORDER}; border-radius:6px; font-size:13px; }}"
-            f"QListWidget::item {{ padding:6px 10px; }}"
-            f"QListWidget::item:selected, QListWidget::item:hover"
-            f" {{ background:{theme.COLOR_PRIMARY}; color:{theme.COLOR_TEXT_ON_PRIMARY}; }}"
+        self.verse_results = FloatingResults(
+            self, verse_box, "Aucun verset trouvé", min_width=420, max_width=640
         )
-        self.verse_results.itemClicked.connect(self._on_verse_result_clicked)
+        self.verse_results.activated.connect(self._on_verse_result_activated)
 
         # Anti-rebond : la recherche part 300 ms après la dernière frappe.
         self._verse_search_timer = QTimer(self)
@@ -851,40 +840,23 @@ class BiblePanel(QWidget):
         if len(query) < 3 or not self._books:
             self.verse_results.hide()
             return
-        results = bible.search_verses(query)
-        self.verse_results.clear()
-        if not results:
-            empty = QListWidgetItem("Aucun verset trouvé")
-            empty.setFlags(Qt.NoItemFlags)
-            self.verse_results.addItem(empty)
-        for row in results:
+        rows = []
+        for row in bible.search_verses(query):
             book = self._find_book(row["book_id"])
             reference = f"{book['name'] if book else '?'} {row['chapter']}:{row['verse']}"
             text = row["text"]
             if len(text) > 90:
                 text = text[:90].rstrip() + "…"
-            item = QListWidgetItem(f"{reference} — {text}")
-            item.setData(Qt.UserRole, (row["book_id"], row["chapter"], row["verse"]))
-            self.verse_results.addItem(item)
-        self._place_verse_results()
-        self.verse_results.show()
-        self.verse_results.raise_()
-
-    def _place_verse_results(self):
-        """Ancre la liste de résultats sous le champ de recherche plein texte."""
-        anchor = self._verse_search_box.mapTo(
-            self, self._verse_search_box.rect().bottomLeft()
-        )
-        row_height = self.verse_results.sizeHintForRow(0)
-        height = min(360, self.verse_results.count() * max(row_height, 24) + 8)
-        width = min(640, max(420, self.width() - anchor.x() - 24))
-        self.verse_results.setGeometry(anchor.x(), anchor.y() + 6, width, height)
+            rows.append(
+                (f"{reference} — {text}", (row["book_id"], row["chapter"], row["verse"]))
+            )
+        self.verse_results.show_results(rows)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._fit_navigation_split()
         if self.verse_results.isVisible():
-            self._place_verse_results()
+            self.verse_results.place()
 
     def _fit_navigation_split(self):
         """Borne le bloc chapitres/versets à une part de la hauteur disponible.
@@ -913,22 +885,20 @@ class BiblePanel(QWidget):
             return
         super().keyPressEvent(event)
 
-    def _on_verse_result_clicked(self, item):
-        target = item.data(Qt.UserRole)
-        if target:
-            self.verse_results.hide()
-            self._jump_to_reference(*target)
+    def _on_verse_result_activated(self, target):
+        # Arrêter l'anti-rebond : une frappe encore en attente rouvrirait la
+        # liste juste après le saut.
+        self._verse_search_timer.stop()
+        self._jump_to_reference(*target)
 
     def _on_verse_search_return(self):
         """Entrée : saute au premier verset trouvé."""
         self._verse_search_timer.stop()
         self._run_verse_search()
-        for i in range(self.verse_results.count()):
-            target = self.verse_results.item(i).data(Qt.UserRole)
-            if target:
-                self.verse_results.hide()
-                self._jump_to_reference(*target)
-                return
+        target = self.verse_results.first_target()
+        if target:
+            self.verse_results.hide()
+            self._jump_to_reference(*target)
 
     def _jump_to_reference(self, book_id, chapter, verse):
         """Navigue vers la référence (bornée aux chapitres/versets existants)."""

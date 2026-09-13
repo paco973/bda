@@ -220,10 +220,17 @@ class ControlWindow(QMainWindow):
             self.controller.set_font_size(int(size))
         screen_name = get_meta("ui_screen_name")
         if screen_name:
-            for screen in self.controller.screens():
-                if screen.name() == screen_name:
+            screens = self.controller.screens()
+            for screen in screens:
+                if screen.name() != screen_name:
+                    continue
+                # Un nom mémorisé désignant l'écran principal est presque
+                # toujours la trace d'une session sans projecteur (le défaut
+                # d'alors) : s'il y a un second écran aujourd'hui, c'est lui
+                # qui prime — la projection part sur le second écran par défaut.
+                if not (self.controller.is_primary(screen) and len(screens) > 1):
                     self.controller.set_screen(screen)
-                    break
+                break
         verses = get_meta("ui_verses_per_slide")
         if verses and verses.isdigit():
             # Le panneau Bible n'existe pas encore (construit à la première
@@ -403,7 +410,7 @@ class ControlWindow(QMainWindow):
         title.setStyleSheet(
             f"color:{theme.COLOR_TEXT}; font-size:34px; font-weight:700; background:transparent;"
         )
-        subtitle = QLabel("Logos Tabernacle · Votre espace de présentation test2")
+        subtitle = QLabel("Logos Tabernacle · Votre espace de présentation")
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setStyleSheet(
             f"color:{theme.COLOR_TEXT_MUTED}; font-size:14px; font-weight:500; background:transparent;"
@@ -768,7 +775,7 @@ class ControlWindow(QMainWindow):
                 return
         install = selfupdate.current_install()
         try:
-            selfupdate.install_and_restart(install, staged)
+            selfupdate.install_and_restart(install, staged, version=release.version)
         except selfupdate.InstallError as exc:
             QMessageBox.warning(
                 self, "Mise à jour impossible",

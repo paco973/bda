@@ -1,6 +1,7 @@
 """
 Petits widgets et aides génériques partagés par les panneaux de l'UI
-(disposition en flux, cases numérotées, logo rond, vidage de layout).
+(disposition en flux, cases numérotées, liste flottante de résultats,
+logo rond, vidage de layout).
 
 Aucune logique métier ici : uniquement des composants réutilisables.
 """
@@ -8,7 +9,14 @@ from contextlib import contextmanager
 
 from PySide6.QtCore import Qt, QTimer, Signal, QRect, QSize, QPoint
 from PySide6.QtGui import QPixmap, QPainter, QPainterPath
-from PySide6.QtWidgets import QWidget, QLabel, QLayout, QPushButton
+from PySide6.QtWidgets import (
+    QWidget,
+    QLabel,
+    QLayout,
+    QPushButton,
+    QListWidget,
+    QListWidgetItem,
+)
 
 from logos.resources import asset_path
 from logos.ui import theme
@@ -234,6 +242,84 @@ class NumberedTextRow(QLabel):
             # Le texte affiché est précédé du numéro en exposant et d'une espace.
             offset = max(0, start - len(str(self.number)) - 1)
         self.partial_selected.emit(self.number, offset)
+
+
+# --------------------------------------------------------------------------- #
+#  Liste flottante de résultats de recherche
+# --------------------------------------------------------------------------- #
+class FloatingResults(QListWidget):
+    """Liste de résultats ancrée sous un champ de recherche, par-dessus le panneau.
+
+    Les deux modes en posent une (versets, paragraphes) avec le même style et
+    la même mécanique : le composant vit ici plutôt que recopié. Elle n'est pas
+    dans un layout : `place()` la positionne sous `anchor` (le cadre du champ)
+    et le panneau la rappelle depuis son `resizeEvent`. `show_results()` prend
+    des couples (libellé, donnée) ; sans résultat, une ligne inerte affiche
+    `empty_text`. Le clic sur une ligne porteuse masque la liste puis émet
+    `activated(donnée)` : le panneau fait le saut.
+    """
+
+    activated = Signal(object)
+
+    def __init__(self, parent, anchor, empty_text, min_width, max_width):
+        super().__init__(parent)
+        self._anchor = anchor
+        self._empty_text = empty_text
+        self._min_width = min_width
+        self._max_width = max_width
+        self.setVisible(False)
+        self.setWordWrap(False)
+        self.setTextElideMode(Qt.ElideRight)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setStyleSheet(
+            f"QListWidget {{ background:{theme.COLOR_SURFACE_ALT}; color:{theme.COLOR_TEXT};"
+            f" border:1px solid {theme.COLOR_BORDER}; border-radius:6px; font-size:13px; }}"
+            f"QListWidget::item {{ padding:6px 10px; }}"
+            f"QListWidget::item:selected, QListWidget::item:hover"
+            f" {{ background:{theme.COLOR_PRIMARY}; color:{theme.COLOR_TEXT_ON_PRIMARY}; }}"
+        )
+        self.itemClicked.connect(self._on_item_clicked)
+
+    def show_results(self, rows):
+        """Remplit la liste avec des couples (libellé, donnée) et l'affiche."""
+        self.clear()
+        rows = list(rows)
+        if not rows:
+            empty = QListWidgetItem(self._empty_text)
+            empty.setFlags(Qt.NoItemFlags)
+            self.addItem(empty)
+        for label, data in rows:
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, data)
+            self.addItem(item)
+        self.place()
+        self.show()
+        self.raise_()
+
+    def place(self):
+        """Ancre la liste sous le champ de recherche, bornée en largeur et hauteur."""
+        parent = self.parentWidget()
+        if parent is None:
+            return
+        anchor = self._anchor.mapTo(parent, self._anchor.rect().bottomLeft())
+        row_height = self.sizeHintForRow(0)
+        height = min(360, self.count() * max(row_height, 24) + 8)
+        width = min(self._max_width, max(self._min_width, parent.width() - anchor.x() - 24))
+        self.setGeometry(anchor.x(), anchor.y() + 6, width, height)
+
+    def first_target(self):
+        """Donnée de la première ligne porteuse, ou None (liste vide ou inerte)."""
+        for i in range(self.count()):
+            data = self.item(i).data(Qt.UserRole)
+            if data:
+                return data
+        return None
+
+    def _on_item_clicked(self, item):
+        data = item.data(Qt.UserRole)
+        if data:
+            self.hide()
+            self.activated.emit(data)
 
 
 def section_title(text: str = "", subdued: bool = False) -> QLabel:

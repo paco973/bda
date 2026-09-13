@@ -7,6 +7,26 @@ bibliques** et de **paragraphes de prédications** sur un second écran
 
 ## Installation
 
+### Sur le poste de l'église
+
+Télécharger la dernière version depuis la page des releases GitHub :
+
+- **Windows** : `BDA-<version>-windows-setup.exe`, l'installeur. Il installe
+  BDA pour l'utilisateur courant (sans mot de passe administrateur), crée un
+  raccourci dans le menu Démarrer (et sur le Bureau si on le demande) et
+  propose de lancer l'application. SmartScreen peut afficher un avertissement,
+  l'installeur n'étant pas signé : « Informations complémentaires » puis
+  « Exécuter quand même ». Pour désinstaller : Paramètres → Applications.
+  Les données de l'opérateur (`~/.bda` : base, corpus, réglages) ne sont
+  jamais supprimées.
+- **macOS** : `BDA-<version>-macos.zip`, à dézipper puis glisser `BDA.app`
+  dans Applications (voir plus bas la manœuvre Gatekeeper au premier lancement).
+
+L'archive `BDA-<version>-windows.zip` reste disponible pour un usage
+**portable** (dossier à dézipper, `BDA.exe` à lancer) : elle n'installe rien.
+
+### Depuis les sources
+
 Prérequis : Python 3.12+.
 
 ```bash
@@ -73,6 +93,13 @@ la fois : projeter depuis l'autre coupe le premier.
 En bas de la fenêtre, l'**écran de projection** et la **taille du texte** valent
 pour toute l'application. Ces réglages, comme les versets par diapositive, sont
 retrouvés au lancement suivant.
+
+Par défaut, la projection part sur le **second écran** (le vidéoprojecteur),
+l'écran principal restant au poste de contrôle. Un projecteur branché après le
+lancement est adopté automatiquement, projection comprise si elle est déjà à
+l'antenne. Un écran mémorisé qui serait l'écran principal ne l'emporte pas sur
+un second écran présent : il faut le choisir à nouveau dans la liste pour
+projeter sur l'écran du poste.
 
 ### Raccourcis clavier
 
@@ -179,8 +206,9 @@ pyinstaller --noconfirm --clean packaging/bda.spec
 Résultat dans `dist/` :
 
 - **macOS** : `dist/BDA.app`, double-cliquable, à glisser dans `/Applications`.
-- **Windows** : `dist/BDA/BDA.exe` — distribuer le **dossier `BDA` entier**
-  (l'`.exe` seul ne fonctionne pas), par exemple zippé.
+- **Windows** : `dist/BDA/BDA.exe` — le **dossier `BDA` entier** est le
+  livrable (l'`.exe` seul ne fonctionne pas). Pour l'installer proprement,
+  `packaging/package.py` en fait un installeur (voir « À la main »).
 
 PyInstaller ne fait pas de compilation croisée : le `.app` macOS se construit
 **sur un Mac**, le `.exe` Windows **sur une machine Windows**, avec la même
@@ -224,8 +252,8 @@ Points à connaître :
 
 Une fois le dépôt poussé sur GitHub, `.github/workflows/release.yml` construit
 macOS **et** Windows à chaque tag de version, lance les tests, et publie une
-release avec les archives, leurs sommes de contrôle et le `latest.json` du
-vérificateur de mise à jour :
+release avec les archives, l'installeur Windows, leurs sommes de contrôle et
+le `latest.json` du vérificateur de mise à jour :
 
 ```bash
 git tag v1.0.1 && git push origin v1.0.1
@@ -254,6 +282,15 @@ python packaging/package.py
 Produit `dist/BDA-<version>-<plateforme>.zip` et sa somme `.sha256`. Sur macOS
 l'archive est faite avec `ditto` : un `.app` zippé avec `zip` arrive cassé chez
 le destinataire (les liens symboliques des frameworks Qt sont aplatis).
+
+Sur Windows, si [Inno Setup 6](https://jrsoftware.org/isinfo.php) est
+installé (ou si la variable `ISCC` pointe sur son compilateur), la même
+commande produit aussi l'installeur `dist/BDA-<version>-windows-setup.exe`
+décrit par `packaging/bda.iss`, avec sa somme. L'installeur pose l'application
+dans `%LocalAppData%\Programs\BDA`, pour l'utilisateur courant : c'est ce
+qui permet à la mise à jour intégrée de la remplacer sans droits
+d'administrateur. L'archive `.zip` reste produite : c'est elle que
+l'application télécharge pour se mettre à jour.
 
 Le destinataire vérifie son téléchargement avec :
 

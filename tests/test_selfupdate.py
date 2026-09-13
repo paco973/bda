@@ -107,6 +107,20 @@ def test_stage_dossier(tmp_path):
     assert not (tmp_path / "Programs" / "BDA.new.extract").exists()
 
 
+def test_stage_conserve_le_desinstalleur(tmp_path):
+    """Posée par l'installeur, l'application porte `unins000.exe/.dat` que
+    l'archive de mise à jour n'a pas : ils suivent dans la nouvelle version."""
+    install = _folder_install(tmp_path)
+    (install.root / "unins000.exe").write_bytes(b"uninstaller")
+    (install.root / "unins000.dat").write_bytes(b"liste")
+    archive = tmp_path / "BDA-9.9.9-windows.zip"
+    _folder_archive(archive)
+    staged = selfupdate.stage(archive, install)
+    assert (staged / "unins000.exe").read_bytes() == b"uninstaller"
+    assert (staged / "unins000.dat").read_bytes() == b"liste"
+    assert (install.root / "unins000.exe").is_file()  # copié, pas déplacé
+
+
 def test_stage_refuse_une_archive_sans_application(tmp_path):
     install = _folder_install(tmp_path)
     archive = tmp_path / "vide.zip"
@@ -215,6 +229,19 @@ def test_script_windows_attend_echange_et_relance():
     assert script.index(":rollback") < script.index(r'move "C:\Programs\BDA.old" "C:\Programs\BDA"')
     assert "\r\n" in script  # fins de ligne attendues par cmd.exe
     assert "chcp 65001" in script
+    assert "reg add" not in script  # sans version, on ne touche pas au registre
+
+
+def test_script_windows_met_a_jour_la_version_installee():
+    """Avec la version, le script tient à jour « Applications installées » —
+    après l'échange réussi et seulement si la clé de l'installeur existe."""
+    install = Install(Path(r"C:\Programs\BDA"), bundle=False)
+    script = selfupdate.windows_helper_script(install, install.staging, pid=1, version="1.2.3")
+    stamp = next(line for line in script.split("\r\n") if "reg add" in line)
+    assert stamp.startswith(f'reg query "{selfupdate.UNINSTALL_KEY}" >nul 2>&1 && reg add')
+    assert '/v DisplayVersion /t REG_SZ /d "1.2.3" /f' in stamp
+    swap_line = script.index(r'move "C:\Programs\BDA.new" "C:\Programs\BDA"')
+    assert swap_line < script.index(stamp) < script.index(":rollback")
 
 
 # --------------------------------------------------------------------------- #

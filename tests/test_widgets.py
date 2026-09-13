@@ -99,3 +99,51 @@ def test_mesures_memorisees_et_invalidees(qapp):
     row.set_active(True)
     assert row._heights == {}             # l'état a changé : mesure périmée
     assert row.heightForWidth(260) > 0
+
+
+def _floating(qapp):
+    from PySide6.QtWidgets import QFrame
+    from logos.ui.widgets import FloatingResults
+
+    panel = QWidget()
+    panel.resize(900, 600)
+    anchor = QFrame(panel)
+    anchor.setGeometry(300, 10, 200, 30)
+    results = FloatingResults(panel, anchor, "Rien", min_width=420, max_width=640)
+    return panel, anchor, results
+
+
+def test_liste_flottante_ancree_sous_le_champ(qapp):
+    """La liste se place sous le cadre du champ, bornée en largeur."""
+    panel, anchor, results = _floating(qapp)
+    results.show_results([("un", 1), ("deux", 2)])
+    assert results.isVisibleTo(panel)
+    assert results.count() == 2
+    geo = results.geometry()
+    # `rect().bottomLeft()` vaut hauteur - 1 chez Qt, d'où le 29.
+    assert (geo.x(), geo.y()) == (300, 10 + 29 + 6)
+    assert 420 <= geo.width() <= 640
+    assert results.first_target() == 1
+
+
+def test_liste_flottante_sans_resultat(qapp):
+    """Sans résultat : une ligne d'information inerte, pas de cible."""
+    panel, anchor, results = _floating(qapp)
+    results.show_results([])
+    assert results.count() == 1
+    assert results.item(0).text() == "Rien"
+    assert results.first_target() is None
+    received = []
+    results.activated.connect(received.append)
+    results.itemClicked.emit(results.item(0))
+    assert received == [] and results.isVisibleTo(panel)
+
+
+def test_liste_flottante_clic_masque_puis_emet(qapp):
+    """Le clic sur une ligne porteuse masque la liste avant d'émettre la donnée."""
+    panel, anchor, results = _floating(qapp)
+    results.show_results([("un", {"id": 7})])
+    seen = []
+    results.activated.connect(lambda data: seen.append((data, results.isVisibleTo(panel))))
+    results.itemClicked.emit(results.item(0))
+    assert seen == [({"id": 7}, False)]

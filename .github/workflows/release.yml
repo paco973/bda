@@ -62,8 +62,15 @@ jobs:
       - name: Construire l'exécutable
         run: pyinstaller --noconfirm --clean packaging/bda.spec
 
-      - name: Empaqueter (archive + somme de contrôle)
+      # Sur Windows, produit aussi l'installeur (Inno Setup est préinstallé sur
+      # les runners GitHub ; `packaging/package.py` le trouve tout seul).
+      - name: Empaqueter (archive + somme de contrôle, installeur sur Windows)
         run: python packaging/package.py
+
+      - name: Vérifier que l'installeur Windows a bien été produit
+        if: runner.os == 'Windows'
+        shell: bash
+        run: ls dist/BDA-*-windows-setup.exe
 
       - uses: actions/upload-artifact@v4
         with:
@@ -71,6 +78,8 @@ jobs:
           path: |
             dist/*.zip
             dist/*.zip.sha256
+            dist/*.exe
+            dist/*.exe.sha256
           if-no-files-found: error
 
   release:
