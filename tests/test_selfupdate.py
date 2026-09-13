@@ -7,6 +7,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -49,8 +50,10 @@ def test_dossier_windows(tmp_path):
     assert install == Install(tmp_path / "Programs" / "BDA", bundle=False)
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"),
+                    reason="chmod ne restreint pas un dossier sous Windows")
 def test_dossier_parent_non_modifiable(tmp_path):
-    if os.geteuid() == 0 if hasattr(os, "geteuid") else False:
+    if os.geteuid() == 0:
         pytest.skip("root écrit partout")
     parent = tmp_path / "locked"
     root = parent / "BDA"

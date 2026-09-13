@@ -253,14 +253,18 @@ def download_asset(asset: Asset, dest_dir, on_progress=None, should_stop=None) -
 
     digest = hashlib.sha256()
     received = 0
+    cancelled = False
+    # Le fichier partiel n'est supprimé qu'une fois **refermé** : sous Windows,
+    # supprimer un fichier encore ouvert échoue (« utilisé par un autre
+    # processus »), et l'annulation se transformait en erreur.
     try:
         with urllib.request.urlopen(
             asset.url, timeout=DOWNLOAD_TIMEOUT_SECONDS, context=ssl_context()
         ) as response, open(partial, "wb") as out:
             while True:
                 if should_stop is not None and should_stop():
-                    partial.unlink(missing_ok=True)
-                    return None
+                    cancelled = True
+                    break
                 chunk = response.read(DOWNLOAD_CHUNK_BYTES)
                 if not chunk:
                     break
@@ -278,6 +282,9 @@ def download_asset(asset: Asset, dest_dir, on_progress=None, should_stop=None) -
         partial.unlink(missing_ok=True)
         raise DownloadError(f"téléchargement interrompu ({exc})") from exc
 
+    if cancelled:
+        partial.unlink(missing_ok=True)
+        return None
     if received != asset.size:
         partial.unlink(missing_ok=True)
         raise DownloadError("l'archive reçue est incomplète")

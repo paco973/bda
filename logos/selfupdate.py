@@ -84,6 +84,8 @@ def unavailable_reason(install: Install | None) -> str | None:
     if install is None:
         return "l'application ne tourne pas depuis une version installée"
     parent = install.root.parent
+    # Sous Windows, `os.access` ne reflète pas les ACL des dossiers : un refus
+    # réel y sera rattrapé plus tard par `stage()` (InstallError, rien modifié).
     if not os.access(parent, os.W_OK):
         return f"le dossier {parent} n'est pas modifiable par cet utilisateur"
     return None
