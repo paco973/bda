@@ -279,3 +279,60 @@ def test_projection_d_un_verset(qapp):
         assert "Jean 3:17" in win.controller.window.label.text()
     finally:
         win.close()
+
+
+def test_bandeau_de_mise_a_jour(qapp):
+    from logos import updates
+    from logos.ui.update_banner import UpdateBanner
+
+    banner = UpdateBanner()
+    asset = updates.Asset("https://exemple.test/BDA.zip", "a" * 64, 10)
+    release = updates.Release("9.9.9", "https://exemple.test/releases", asset=asset)
+    installs, restarts = [], []
+    banner.install_requested.connect(installs.append)
+    banner.restart_requested.connect(lambda: restarts.append(True))
+
+    # Installable : le bouton demande l'installation à la fenêtre.
+    banner.show_release(release, installable=True)
+    assert banner._action_btn.text() == "Installer la mise à jour"
+    banner._action_btn.click()
+    assert installs == [release] and restarts == []
+
+    # Pas installable (ou pas d'archive) : simple téléchargement manuel.
+    banner.show_release(release, installable=False)
+    assert banner._action_btn.text() == "Télécharger"
+    banner.show_release(updates.Release("9.9.9", "https://exemple.test/r"), installable=True)
+    assert banner._action_btn.text() == "Télécharger"
+
+    # Version prête : le bouton demande le redémarrage.
+    banner.show_ready(release)
+    assert banner._action_btn.text() == "Redémarrer maintenant"
+    banner._action_btn.click()
+    assert restarts == [True] and installs == [release]
+
+    banner.set_busy(True)
+    assert not banner._action_btn.isEnabled()
+
+
+def test_fenetre_refuse_l_installation_depuis_les_sources(qapp, monkeypatch):
+    from logos import updates
+    from logos.ui import control_window
+    from logos.ui.control_window import ControlWindow
+    from PySide6.QtWidgets import QMessageBox
+
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        staticmethod(lambda *args: shown.append(args[2])))
+    win = ControlWindow()
+    try:
+        asset = updates.Asset("https://exemple.test/BDA.zip", "a" * 64, 10)
+        release = updates.Release("9.9.9", "https://exemple.test/releases", asset=asset)
+        # Depuis les sources (pas gelée) : le bandeau propose seulement « Télécharger ».
+        win._show_available(release)
+        assert win.update_banner._action_btn.text() == "Télécharger"
+        # Et une demande d'installation directe est refusée proprement.
+        win._install_update(release)
+        assert shown and "pas possible" in shown[0]
+        assert win._staged_update is None
+    finally:
+        win.close()

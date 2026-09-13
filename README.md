@@ -116,21 +116,35 @@ démarre dans tous les cas.
 
 ### L'application elle-même
 
-Le menu **Aide → Rechercher les mises à jour…** interroge l'adresse de
-publication et signale l'existence d'une version plus récente ; un bandeau
-apparaît alors en haut de la fenêtre avec un lien de téléchargement. Le
-remplacement reste manuel : rien n'est téléchargé ni installé automatiquement.
+Au démarrage (et via **Aide → Rechercher les mises à jour…**), l'application
+interroge l'adresse de publication. Si une version plus récente existe, un
+bandeau apparaît en haut de la fenêtre :
+
+1. **Installer la mise à jour** télécharge l'archive de votre plateforme
+   (après confirmation, avec la taille et les notes de version), en tâche de
+   fond, sans gêner l'utilisation. L'archive est **vérifiée** (empreinte
+   SHA-256) avant toute installation : un fichier altéré est refusé.
+2. Une fois la nouvelle version prête, le bandeau propose **Redémarrer
+   maintenant**. Rien n'est remplacé avant ce clic : vous choisissez le
+   moment, jamais en plein culte (l'application prévient si une projection
+   est en cours).
+3. Au redémarrage, la nouvelle version prend la place de l'ancienne, qui est
+   conservée à côté (`BDA.app.old` sur macOS, dossier `BDA.old` sur Windows)
+   jusqu'au prochain lancement réussi. Si la nouvelle version refuse de
+   démarrer, renommez ce dossier pour revenir en arrière.
+
+Le bouton s'appelle **Télécharger** (il ouvre simplement la page de
+téléchargement) quand l'installation intégrée n'est pas possible : version
+lancée depuis les sources, dossier d'installation non modifiable par
+l'utilisateur, ou version publiée sans archive pour votre plateforme.
 
 **Aide → Vérifier au démarrage** désactive la vérification automatique. Sur un
 poste sans Internet, la vérification échoue en silence et ne gêne pas
 l'utilisation.
 
-> Cette fonction reste **inactive tant qu'aucune adresse de publication n'est
-> configurée** dans `logos/updates.py` (`MANIFEST_URL`). Pour l'activer, publier
-> en HTTPS un fichier JSON de la forme
-> `{"version": "1.1.0", "url": "https://…/BDA-1.1.0.zip", "notes": "…"}`
-> et renseigner son adresse. Le numéro de version de l'application se change à
-> un seul endroit : `logos/version.py`.
+> L'adresse de publication est celle de la dernière release GitHub du dépôt
+> (`MANIFEST_URL` dans `logos/updates.py`). Le numéro de version de
+> l'application se change à un seul endroit : `logos/version.py`.
 
 ## Développement
 

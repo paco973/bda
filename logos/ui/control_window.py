@@ -24,7 +24,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 
-from logos import updates
+from logos import selfupdate, updates
+from logos.resources import USER_DIR
 from logos.data import predications, scrape
 from logos.data.database import get_meta, set_meta
 from logos.ui import theme
@@ -81,6 +82,43 @@ class _DownloadTask(QRunnable):
             signal.emit(payload)
         except RuntimeError:
             pass  # fenêtre fermée entre-temps : plus personne à prévenir
+
+
+# --------------------------------------------------------------------------- #
+#  Mise à jour de l'application en tâche de fond
+# --------------------------------------------------------------------------- #
+class _UpdateSignals(QObject):
+    progress = Signal(int, int)        # (octets reçus, total)
+    finished = Signal(object)          # chemin de la version extraite, ou None si annulé
+    failed = Signal(str)               # message pour l'opérateur
+
+
+class _UpdateTask(QRunnable):
+    """Télécharge l'archive vérifiée puis l'extrait à côté de l'installation.
+    Rien n'est remplacé ici : l'échange et le redémarrage attendent le clic
+    « Redémarrer maintenant »."""
+
+    def __init__(self, signals, release, install, should_stop):
+        super().__init__()
+        self._signals = signals
+        self._release = release
+        self._install = install
+        self._should_stop = should_stop
+
+    def run(self):
+        try:
+            archive = updates.download_asset(
+                self._release.asset, USER_DIR / "updates",
+                on_progress=self._signals.progress.emit, should_stop=self._should_stop,
+            )
+            if archive is None:
+                _DownloadTask._emit(self._signals.finished, None)
+                return
+            staged = selfupdate.stage(archive, self._install)
+        except (updates.DownloadError, selfupdate.InstallError) as exc:
+            _DownloadTask._emit(self._signals.failed, str(exc))
+            return
+        _DownloadTask._emit(self._signals.finished, staged)
 
 
 class _HomeCard(QFrame):
@@ -242,6 +280,9 @@ class ControlWindow(QMainWindow):
         # Bandeau « nouvelle version disponible » : masqué tant qu'aucune mise à
         # jour n'a été trouvée, au-dessus de tout le reste.
         self.update_banner = UpdateBanner()
+        self.update_banner.install_requested.connect(self._install_update)
+        self.update_banner.restart_requested.connect(self._restart_into_update)
+        self._staged_update = None  # (release, chemin extrait) en attente de redémarrage
 
         central = QWidget()
         central_layout = QVBoxLayout(central)
@@ -611,7 +652,126 @@ class ControlWindow(QMainWindow):
 
     def _on_startup_check_done(self, result):
         if result.status == updates.AVAILABLE:
-            self.update_banner.show_release(result.release)
+            self._show_available(result.release)
+
+    def _show_available(self, release):
+        if self._staged_update is not None:
+            return  # une version est déjà prête : ne pas repartir de zéro
+        installable = selfupdate.unavailable_reason(selfupdate.current_install()) is None
+        self.update_banner.show_release(release, installable)
+
+    # ---------- Mise à jour intégrée ----------
+    def _install_update(self, release):
+        """Télécharge et extrait la nouvelle version après confirmation ; le
+        remplacement effectif attend « Redémarrer maintenant »."""
+        install = selfupdate.current_install()
+        reason = selfupdate.unavailable_reason(install)
+        if reason is not None or release.asset is None:
+            QMessageBox.information(
+                self, "Mise à jour",
+                "L'installation automatique n'est pas possible ici"
+                + (f" : {reason}." if reason else ".")
+                + "\n\nUtilisez le bouton « Télécharger » pour récupérer la "
+                "nouvelle version à la main.",
+            )
+            self.update_banner.show_release(release, installable=False)
+            return
+
+        size_mb = release.asset.size / 1_000_000
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("Installer la mise à jour")
+        box.setTextFormat(Qt.PlainText)  # notes distantes : jamais du HTML
+        box.setText(f"Installer la version {release.version} ?")
+        box.setInformativeText(
+            f"Environ {size_mb:.0f} Mo seront téléchargés, puis vérifiés avant "
+            "toute installation. L'application reste utilisable pendant ce "
+            "temps ; elle ne sera remplacée qu'au redémarrage, quand vous "
+            "le déciderez.\n\nL'ancienne version est conservée à côté "
+            "(dossier « .old ») jusqu'au prochain lancement réussi."
+            + (f"\n\nNotes de version :\n{release.notes}" if release.notes else "")
+        )
+        install_btn = box.addButton("Installer", QMessageBox.AcceptRole)
+        cancel_btn = box.addButton("Annuler", QMessageBox.RejectRole)
+        box.setDefaultButton(cancel_btn)
+        box.exec()
+        if box.clickedButton() is not install_btn:
+            return
+
+        progress = QProgressDialog(
+            f"Téléchargement de la version {release.version}…", "Annuler", 0, 100, self
+        )
+        progress.setWindowTitle("Mise à jour")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setMinimumWidth(480)
+        progress.setValue(0)
+
+        cancelled = {"stop": False}
+        progress.canceled.connect(lambda: cancelled.update(stop=True))
+        self.update_banner.set_busy(True)
+        signals = _UpdateSignals(self)
+
+        def on_progress(received, total):
+            progress.setValue(int(received * 100 / total) if total else 0)
+            progress.setLabelText(
+                f"Téléchargement de la version {release.version}… "
+                f"{received / 1_000_000:.0f} / {total / 1_000_000:.0f} Mo"
+            )
+
+        def on_finished(staged):
+            progress.reset()
+            self.update_banner.set_busy(False)
+            if staged is None:  # annulé : rien n'a été conservé
+                return
+            self._staged_update = (release, staged)
+            self.update_banner.show_ready(release)
+
+        def on_failed(message):
+            progress.reset()
+            self.update_banner.set_busy(False)
+            QMessageBox.warning(
+                self, "Mise à jour impossible",
+                f"La mise à jour n'a pas pu être préparée : {message}.\n\n"
+                "L'application en place n'a pas été modifiée — réessayez plus "
+                "tard, ou téléchargez la nouvelle version à la main.",
+            )
+
+        signals.progress.connect(on_progress)
+        signals.finished.connect(on_finished)
+        signals.failed.connect(on_failed)
+        QThreadPool.globalInstance().start(
+            _UpdateTask(signals, release, install, lambda: cancelled["stop"])
+        )
+
+    def _restart_into_update(self):
+        """Remplace l'application par la version extraite et la relance."""
+        if self._staged_update is None:
+            return
+        release, staged = self._staged_update
+        if self.controller.on_air() is not None:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("Redémarrer maintenant ?")
+            box.setText("Une projection est en cours : redémarrer va l'interrompre.")
+            box.setInformativeText("Le redémarrage peut attendre la fin du culte.")
+            restart_btn = box.addButton("Redémarrer quand même", QMessageBox.AcceptRole)
+            wait_btn = box.addButton("Attendre", QMessageBox.RejectRole)
+            box.setDefaultButton(wait_btn)
+            box.exec()
+            if box.clickedButton() is not restart_btn:
+                return
+        install = selfupdate.current_install()
+        try:
+            selfupdate.install_and_restart(install, staged)
+        except selfupdate.InstallError as exc:
+            QMessageBox.warning(
+                self, "Mise à jour impossible",
+                f"{exc}.\n\nSi l'application ne redémarre pas, relancez-la à la main.",
+            )
+            return
+        self.controller.close()
+        QApplication.instance().quit()
 
     # ---------- Téléchargement des prédications ----------
     def _download_predications(self):
@@ -716,7 +876,7 @@ class ControlWindow(QMainWindow):
 
     def _on_manual_check_done(self, result):
         if result.status == updates.AVAILABLE:
-            self.update_banner.show_release(result.release)
+            self._show_available(result.release)
             box = QMessageBox(self)
             box.setWindowTitle("Mises à jour")
             box.setTextFormat(Qt.PlainText)  # notes distantes : jamais du HTML

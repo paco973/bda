@@ -89,14 +89,15 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      # Manifeste lu par « Aide > Rechercher les mises à jour » : il pointe vers
-      # la page de la dernière release, à charge de l'utilisateur d'y prendre
-      # l'archive de sa plateforme.
+      # Manifeste lu par « Aide > Rechercher les mises à jour » : la page de la
+      # release (repli navigateur) et, par plateforme, l'archive que
+      # l'application installe elle-même (URL directe, taille, empreinte).
       - name: Générer latest.json
         run: |
           python packaging/package.py --manifest-only \
             --out artifacts \
-            --release-url "https://github.com/${{ github.repository }}/releases/latest"
+            --release-url "https://github.com/${{ github.repository }}/releases/latest" \
+            --asset-base "https://github.com/${{ github.repository }}/releases/download/$GITHUB_REF_NAME"
 
       - name: Créer la release
         env:

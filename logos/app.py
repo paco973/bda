@@ -7,7 +7,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from logos import resources
+from logos import resources, selfupdate
 from logos.data import bible, database, predications
 from logos.ui import theme
 from logos.ui.control_window import ControlWindow
@@ -15,6 +15,7 @@ from logos.ui.control_window import ControlWindow
 
 def main():
     resources.ensure_user_dirs()  # dossier où déposer un contenu à jour
+    selfupdate.cleanup_previous()  # la mise à jour précédente a réussi : on efface l'ancienne version
     database.init_db()
     bible.ensure_imported()         # premier lancement : importe la Bible embarquée
     predications.ensure_imported()  # importe les prédications si l'asset est présent

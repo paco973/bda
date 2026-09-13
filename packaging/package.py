@@ -15,10 +15,16 @@ Sur macOS l'archive est faite avec `ditto`, et non avec `zip` : un bundle `.app`
 contient des liens symboliques (frameworks Qt) que `zip` aplatit, ce qui donne
 une application cassée à l'arrivée.
 
-Le manifeste se génère à part, une fois les deux plateformes construites :
+Le manifeste se génère à part, une fois les deux plateformes construites, en
+lisant les archives et leurs sommes déposées dans `--out` :
 
-    python packaging/package.py --manifest-only \\
-        --release-url https://github.com/<compte>/<depot>/releases/latest
+    python packaging/package.py --manifest-only --out artifacts \\
+        --release-url https://github.com/<compte>/<depot>/releases/latest \\
+        --asset-base https://github.com/<compte>/<depot>/releases/download/v1.1.0
+
+Il porte, par plateforme, l'URL directe de l'archive, sa taille et son
+empreinte : c'est ce qui permet à l'application de se mettre à jour seule
+(`logos/selfupdate.py`), l'empreinte étant vérifiée avant toute installation.
 """
 import argparse
 import hashlib
@@ -75,21 +81,45 @@ def build_archive() -> Path:
     return archive
 
 
-def write_manifest(release_url: str, notes: str, out_dir: Path) -> Path:
-    """Manifeste consommé par `logos.updates` : version publiée et page où la
-    récupérer (une page, pas un fichier : l'utilisateur choisit sa plateforme)."""
+def collect_assets(out_dir: Path, asset_base: str) -> dict:
+    """Entrée `assets` du manifeste : pour chaque `BDA-<version>-<plateforme>.zip`
+    présent dans `out_dir`, l'URL sous `asset_base`, la taille et l'empreinte
+    lue dans le `.sha256` voisin (celle que le téléchargeur vérifiera)."""
+    assets = {}
+    pattern = re.compile(rf"^BDA-{re.escape(version())}-(?P<tag>[a-z]+)\.zip$")
+    for archive in sorted(out_dir.glob("*.zip")):
+        match = pattern.match(archive.name)
+        if not match:
+            continue
+        checksum = archive.with_suffix(archive.suffix + ".sha256")
+        if not checksum.is_file():
+            sys.exit(f"Somme manquante pour {archive.name} : {checksum.name}")
+        digest = checksum.read_text(encoding="utf-8").split()[0].lower()
+        assets[match.group("tag")] = {
+            "url": f"{asset_base.rstrip('/')}/{archive.name}",
+            "sha256": digest,
+            "size": archive.stat().st_size,
+        }
+    return assets
+
+
+def write_manifest(release_url: str, notes: str, out_dir: Path, asset_base=None) -> Path:
+    """Manifeste consommé par `logos.updates` : version publiée, page où la
+    récupérer (repli navigateur) et, si `asset_base` est donné, les archives
+    installables par l'application elle-même."""
     if not release_url.startswith("https://"):
         sys.exit("--release-url doit être en HTTPS (exigé par logos/updates.py)")
+    if asset_base and not asset_base.startswith("https://"):
+        sys.exit("--asset-base doit être en HTTPS (exigé par logos/updates.py)")
     out_dir.mkdir(parents=True, exist_ok=True)
+    payload = {"version": version(), "url": release_url, "notes": notes}
+    if asset_base:
+        payload["assets"] = collect_assets(out_dir, asset_base)
+        if not payload["assets"]:
+            sys.exit(f"Aucune archive BDA-{version()}-*.zip dans {out_dir}")
     target = out_dir / "latest.json"
     target.write_text(
-        json.dumps(
-            {"version": version(), "url": release_url, "notes": notes},
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",
     )
     return target
 
@@ -101,6 +131,11 @@ def main():
         help="n'écrire que latest.json (aucun build requis)",
     )
     parser.add_argument("--release-url", help="page de téléchargement (HTTPS)")
+    parser.add_argument(
+        "--asset-base",
+        help="préfixe HTTPS des archives (ex. …/releases/download/v1.1.0) : "
+             "renseigne les archives installables par l'application",
+    )
     parser.add_argument("--notes", default="", help="notes de version affichées")
     parser.add_argument(
         "--out", type=Path, default=DIST, help="dossier de sortie du manifeste",
@@ -110,7 +145,7 @@ def main():
     if args.manifest_only:
         if not args.release_url:
             sys.exit("--manifest-only exige --release-url")
-        print(f"Écrit : {write_manifest(args.release_url, args.notes, args.out)}")
+        print(f"Écrit : {write_manifest(args.release_url, args.notes, args.out, args.asset_base)}")
         return
 
     archive = build_archive()
@@ -119,7 +154,7 @@ def main():
     print(f"Écrit : {archive} ({size_mb:.0f} Mo)")
     print(f"Écrit : {checksum}")
     if args.release_url:
-        print(f"Écrit : {write_manifest(args.release_url, args.notes, args.out)}")
+        print(f"Écrit : {write_manifest(args.release_url, args.notes, args.out, args.asset_base)}")
 
 
 if __name__ == "__main__":
